@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PIM 简易 WebSocket 测试</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 20px auto; }
+    input, button { margin: 4px 0; padding: 4px 8px; }
+    #log { border: 1px solid #ccc; padding: 8px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>PIM WebSocket 测试</h1>
+
+  <div>
+    <label>JWT Token：</label><br />
+    <textarea id="token" rows="3" cols="80" placeholder="在这里粘贴 /api/v1/login 返回的 token"></textarea>
+  </div>
+
+  <button id="connectBtn">连接 WebSocket</button>
+  <span id="status">未连接</span>
+
+  <hr />
+
+  <div>
+    <label>发送给用户 ID：</label><br />
+    <input type="number" id="toUserId" placeholder="例如 2" />
+  </div>
+  <div>
+    <label>消息内容：</label><br />
+    <input type="text" id="message" placeholder="hello" style="width: 100%;" />
+  </div>
+  <button id="sendBtn" disabled>发送</button>
+
+  <h3>消息日志：</h3>
+  <div id="log"></div>
+
+  <script>
+    let ws = null;
+
+    const logDiv = document.getElementById('log');
+    function log(msg) {
+      const time = new Date().toLocaleTimeString();
+      logDiv.textContent += `[${time}] ${msg}\n`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    document.getElementById('connectBtn').onclick = function () {
+      const token = document.getElementById('token').value.trim();
+      if (!token) {
+        alert('请先粘贴 JWT token');
+        return;
+      }
+
+      // 注意：这里用 query 参数 token 传给后端
+      const wsUrl = `ws://localhost:8080/ws?token=${encodeURIComponent(token)}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = function () {
+        document.getElementById('status').textContent = '已连接';
+        document.getElementById('sendBtn').disabled = false;
+        log('WebSocket 连接已建立');
+      };
+
+      ws.onmessage = function (event) {
+        log('收到消息：' + event.data);
+      };
+
+      ws.onclose = function () {
+        document.getElementById('status').textContent = '已断开';
+        document.getElementById('sendBtn').disabled = true;
+        log('WebSocket 连接已关闭');
+      };
+
+      ws.onerror = function (err) {
+        console.error('WebSocket error:', err);
+        log('WebSocket 发生错误（详见控制台）');
+      };
+    };
+
+    document.getElementById('sendBtn').onclick = function () {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        alert('WebSocket 尚未连接');
+        return;
+      }
+      const toUserId = document.getElementById('toUserId').value.trim();
+      const message = document.getElementById('message').value.trim();
+      if (!toUserId || !message) {
+        alert('请填写接收方 ID 和消息内容');
+        return;
+      }
+      const payload = {
+        to: Number(toUserId),
+        content: message,
+      };
+      ws.send(JSON.stringify(payload));
+      log('发送消息：' + JSON.stringify(payload));
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# 阶段 0：仅基础设施（PostgreSQL + Redis）
+# 使用方式：在本目录执行  docker compose -f docker-compose.infra.yml up -d
+# 停止：docker compose -f docker-compose.infra.yml down
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pim-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pim
+      POSTGRES_PASSWORD: pim
+      POSTGRES_DB: pim
+    ports:
+      - "5432:5432"
+    volumes:
+      - pim_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pim -d pim"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pim-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - pim_redisdata:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pim_pgdata:
+  pim_redisdata:
