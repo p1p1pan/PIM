@@ -1,101 +1,453 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>PIM 简易 WebSocket 测试</title>
+  <title>PIM 聊天 Demo</title>
   <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 20px auto; }
-    input, button { margin: 4px 0; padding: 4px 8px; }
-    #log { border: 1px solid #ccc; padding: 8px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e5e7eb; }
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    header { padding: 12px 20px; border-bottom: 1px solid #1f2937; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 18px; }
+    header small { color: #9ca3af; }
+    main { flex: 1; display: flex; }
+    .sidebar { width: 260px; border-right: 1px solid #1f2937; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: #020617; }
+    .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; margin-bottom: 4px; }
+    .card { background: #020617; border: 1px solid #1f2937; border-radius: 10px; padding: 10px; }
+    label { font-size: 12px; color: #9ca3af; display: block; margin-bottom: 4px; }
+    input, button, textarea { font-family: inherit; }
+    input, textarea { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #1f2937; background: #020617; color: #e5e7eb; font-size: 13px; }
+    input:focus, textarea:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 1px #0ea5e933; }
+    button { padding: 6px 10px; border-radius: 999px; border: none; font-size: 13px; cursor: pointer; background: #38bdf8; color: #0b1120; font-weight: 500; }
+    button.secondary { background: #111827; color: #e5e7eb; border: 1px solid #374151; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; }
+    .status-pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: #111827; color: #9ca3af; }
+    .status-pill.ok { color: #22c55e; background: #052e16; }
+    .status-pill.err { color: #f97316; background: #451a03; }
+
+    .content { flex: 1; display: flex; flex-direction: column; }
+    .content-top { padding: 10px 16px; border-bottom: 1px solid #1f2937; display: flex; justify-content: space-between; align-items: center; }
+    .content-main { flex: 1; display: flex; }
+
+    .friends-panel { width: 220px; border-right: 1px solid #1f2937; padding: 10px; overflow-y: auto; }
+    .friends-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .friend-item { padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .friend-item:hover { background: #020617; }
+    .friend-item.active { background: #0f172a; border: 1px solid #1d4ed8; }
+
+    .chat-panel { flex: 1; display: flex; flex-direction: column; }
+    .messages { flex: 1; padding: 10px 14px; overflow-y: auto; background: #020617; }
+    .msg { margin-bottom: 8px; max-width: 70%; padding: 6px 10px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
+    .msg.me { margin-left: auto; background: #1d4ed8; color: #e5e7eb; border-bottom-right-radius: 2px; }
+    .msg.other { margin-right: auto; background: #111827; color: #e5e7eb; border-bottom-left-radius: 2px; }
+    .msg-meta { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+
+    .composer { padding: 8px 12px; border-top: 1px solid #1f2937; background: #020617; display: flex; flex-direction: column; gap: 6px; }
+    .composer-row { display: flex; gap: 8px; }
+    .composer-row input { flex: 1; }
+
+    .log { font-size: 11px; max-height: 80px; overflow-y: auto; padding: 6px 8px; border-radius: 6px; background: #020617; border: 1px solid #1f2937; color: #9ca3af; white-space: pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>PIM WebSocket 测试</h1>
+<div class="app">
+  <header>
+    <div>
+      <h1>PIM 聊天 Demo</h1>
+      <small>通过 Gateway(8080) 调用 User/Friend/Conversation 服务</small>
+    </div>
+    <div id="headerUser" style="font-size: 13px; color:#9ca3af;">
+      未登录
+    </div>
+  </header>
 
-  <div>
-    <label>JWT Token：</label><br />
-    <textarea id="token" rows="3" cols="80" placeholder="在这里粘贴 /api/v1/login 返回的 token"></textarea>
-  </div>
+  <main>
+    <aside class="sidebar">
+      <div class="card">
+        <div class="section-title">注册 / 登录</div>
+        <div class="row">
+          <div>
+            <label>用户名</label>
+            <input id="regUsername" placeholder="new user" />
+          </div>
+          <div>
+            <label>密码</label>
+            <input id="regPassword" type="password" placeholder="password" />
+          </div>
+        </div>
+        <button id="registerBtn" style="margin-top:6px; width:100%;">注册</button>
 
-  <button id="connectBtn">连接 WebSocket</button>
-  <span id="status">未连接</span>
+        <hr style="border:none; border-top:1px solid #1f2937; margin:10px 0;" />
 
-  <hr />
+        <div class="row">
+          <div>
+            <label>用户名</label>
+            <input id="loginUsername" placeholder="user" />
+          </div>
+          <div>
+            <label>密码</label>
+            <input id="loginPassword" type="password" placeholder="password" />
+          </div>
+        </div>
+        <button id="loginBtn" style="margin-top:6px; width:100%;">登录</button>
+        <div style="margin-top:6px; font-size:11px; color:#9ca3af;" id="authInfo"></div>
+      </div>
 
-  <div>
-    <label>发送给用户 ID：</label><br />
-    <input type="number" id="toUserId" placeholder="例如 2" />
-  </div>
-  <div>
-    <label>消息内容：</label><br />
-    <input type="text" id="message" placeholder="hello" style="width: 100%;" />
-  </div>
-  <button id="sendBtn" disabled>发送</button>
+      <div class="card">
+        <div class="section-title">当前状态</div>
+        <div style="display:flex; flex-direction:column; gap:4px; font-size:12px;">
+          <div>HTTP：<span id="apiStatus" class="status-pill">未检测</span></div>
+          <div>WS：<span id="wsStatus" class="status-pill">未连接</span></div>
+        </div>
+        <button id="pingBtn" class="secondary" style="margin-top:8px; width:100%;">检查 /health</button>
+      </div>
 
-  <h3>消息日志：</h3>
-  <div id="log"></div>
+      <div class="card">
+        <div class="section-title">好友</div>
+        <label>添加好友（对方用户 ID）</label>
+        <div class="row">
+          <input id="addFriendId" type="number" placeholder="2" />
+          <button id="addFriendBtn" class="secondary">添加</button>
+        </div>
+        <button id="loadFriendsBtn" style="margin-top:6px; width:100%;">刷新好友列表</button>
+        <div class="friends-list" id="friendsList"></div>
+      </div>
 
-  <script>
-    let ws = null;
+      <div class="card">
+        <div class="section-title">调试日志</div>
+        <div class="log" id="debugLog"></div>
+      </div>
+    </aside>
 
-    const logDiv = document.getElementById('log');
-    function log(msg) {
-      const time = new Date().toLocaleTimeString();
-      logDiv.textContent += `[${time}] ${msg}\n`;
-      logDiv.scrollTop = logDiv.scrollHeight;
+    <section class="content">
+      <div class="content-top">
+        <div>
+          <div style="font-size:13px;">当前对话：<span id="currentPeer">未选择</span></div>
+          <div style="font-size:11px; color:#9ca3af; margin-top:2px;">选择左侧好友后，拉取历史消息并通过 WebSocket 收发</div>
+        </div>
+        <div>
+          <button id="connectWsBtn" class="secondary">连接 WebSocket</button>
+        </div>
+      </div>
+
+      <div class="content-main">
+        <div class="friends-panel">
+          <div class="section-title">好友列表</div>
+          <div id="friendsListRight" class="friends-list"></div>
+        </div>
+
+        <div class="chat-panel">
+          <div id="messages" class="messages"></div>
+          <div class="composer">
+            <div class="composer-row">
+              <input id="peerIdInput" type="number" placeholder="手动填对方用户 ID（可选，通常通过选择好友）" />
+            </div>
+            <div class="composer-row">
+              <input id="msgInput" placeholder="输入消息，回车发送" />
+              <button id="sendMsgBtn">发送</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const API_BASE = "http://localhost:8080"; // 走 Gateway
+
+  let authToken = null;
+  let currentUser = null;
+  let friends = [];
+  let currentPeerId = null;
+  let ws = null;
+
+  const el = (id) => document.getElementById(id);
+
+  function setApiStatus(ok, msg) {
+    const s = el('apiStatus');
+    s.textContent = msg || (ok ? 'OK' : '错误');
+    s.className = 'status-pill ' + (ok ? 'ok' : 'err');
+  }
+
+  function setWsStatus(status, ok) {
+    const s = el('wsStatus');
+    s.textContent = status;
+    s.className = 'status-pill ' + (ok ? 'ok' : '');
+  }
+
+  function logDebug(msg) {
+    const box = el('debugLog');
+    const time = new Date().toLocaleTimeString();
+    box.textContent += `[${time}] ${msg}\n`;
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function renderHeaderUser() {
+    const h = el('headerUser');
+    if (!currentUser) {
+      h.textContent = '未登录';
+    } else {
+      h.textContent = `已登录：${currentUser.username} (ID: ${currentUser.id})`;
     }
+  }
 
-    document.getElementById('connectBtn').onclick = function () {
-      const token = document.getElementById('token').value.trim();
-      if (!token) {
-        alert('请先粘贴 JWT token');
-        return;
-      }
+  function renderFriends() {
+    const left = el('friendsList');
+    const right = el('friendsListRight');
+    left.innerHTML = '';
+    right.innerHTML = '';
+    friends.forEach(f => {
+      const label = `#${f.friend_id}`;
+      const node1 = document.createElement('div');
+      node1.className = 'friend-item' + (currentPeerId === f.friend_id ? ' active' : '');
+      node1.textContent = label;
+      node1.onclick = () => selectPeer(f.friend_id);
+      left.appendChild(node1);
 
-      // 注意：这里用 query 参数 token 传给后端
-      const wsUrl = `ws://localhost:8080/ws?token=${encodeURIComponent(token)}`;
-      ws = new WebSocket(wsUrl);
+      const node2 = document.createElement('div');
+      node2.className = 'friend-item' + (currentPeerId === f.friend_id ? ' active' : '');
+      node2.textContent = label;
+      node2.onclick = () => selectPeer(f.friend_id);
+      right.appendChild(node2);
+    });
+  }
 
-      ws.onopen = function () {
-        document.getElementById('status').textContent = '已连接';
-        document.getElementById('sendBtn').disabled = false;
-        log('WebSocket 连接已建立');
-      };
+  function appendMessage(msg, isMe) {
+    const box = el('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + (isMe ? 'me' : 'other');
+    wrap.textContent = msg.content;
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = `${isMe ? '我' : '对方'} · ${new Date().toLocaleTimeString()}`;
+    wrap.appendChild(document.createElement('br'));
+    wrap.appendChild(meta);
+    box.appendChild(wrap);
+    box.scrollTop = box.scrollHeight;
+  }
 
-      ws.onmessage = function (event) {
-        log('收到消息：' + event.data);
-      };
+  function clearMessages() {
+    el('messages').innerHTML = '';
+  }
 
-      ws.onclose = function () {
-        document.getElementById('status').textContent = '已断开';
-        document.getElementById('sendBtn').disabled = true;
-        log('WebSocket 连接已关闭');
-      };
+  async function apiRequest(path, options = {}) {
+    const url = API_BASE + path;
+    const headers = options.headers || {};
+    if (authToken) {
+      headers['Authorization'] = 'Bearer ' + authToken;
+    }
+    const resp = await fetch(url, {
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const text = await resp.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch(e) { data = null; }
+    if (!resp.ok) {
+      throw new Error(data && data.error ? data.error : `HTTP ${resp.status}`);
+    }
+    return data;
+  }
 
-      ws.onerror = function (err) {
-        console.error('WebSocket error:', err);
-        log('WebSocket 发生错误（详见控制台）');
-      };
+  // 注册
+  el('registerBtn').onclick = async () => {
+    const username = el('regUsername').value.trim();
+    const password = el('regPassword').value.trim();
+    if (!username || !password) {
+      alert('请输入用户名和密码');
+      return;
+    }
+    try {
+      const res = await apiRequest('/api/v1/register', {
+        method: 'POST',
+        body: { username, password },
+      });
+      logDebug('注册成功: ' + JSON.stringify(res));
+      alert('注册成功，现在可以使用该账号登录');
+    } catch (e) {
+      logDebug('注册失败: ' + e.message);
+      alert('注册失败: ' + e.message);
+    }
+  };
+
+  // 登录
+  el('loginBtn').onclick = async () => {
+    const username = el('loginUsername').value.trim();
+    const password = el('loginPassword').value.trim();
+    if (!username || !password) {
+      alert('请输入用户名和密码');
+      return;
+    }
+    try {
+      const res = await apiRequest('/api/v1/login', {
+        method: 'POST',
+        body: { username, password },
+      });
+      authToken = res.token;
+      currentUser = res.user;
+      renderHeaderUser();
+      el('authInfo').textContent = '已获取 JWT token，后续请求自动携带';
+      logDebug('登录成功: ' + JSON.stringify(res));
+    } catch (e) {
+      logDebug('登录失败: ' + e.message);
+      alert('登录失败: ' + e.message);
+    }
+  };
+
+  // 检查 /health
+  el('pingBtn').onclick = async () => {
+    try {
+      const res = await fetch(API_BASE + '/health');
+      const ok = res.ok;
+      setApiStatus(ok, ok ? '200 /health' : '错误');
+      logDebug('GET /health -> ' + res.status);
+    } catch (e) {
+      setApiStatus(false, '连接失败');
+      logDebug('GET /health 失败: ' + e.message);
+    }
+  };
+
+  // 添加好友
+  el('addFriendBtn').onclick = async () => {
+    const idStr = el('addFriendId').value.trim();
+    if (!idStr) {
+      alert('请输入好友用户 ID');
+      return;
+    }
+    try {
+      const fid = Number(idStr);
+      await apiRequest('/api/v1/friends', {
+        method: 'POST',
+        body: { friend_id: fid },
+      });
+      logDebug('添加好友成功: ' + fid);
+      await loadFriends();
+    } catch (e) {
+      logDebug('添加好友失败: ' + e.message);
+      alert('添加好友失败: ' + e.message);
+    }
+  };
+
+  // 拉好友列表
+  async function loadFriends() {
+    try {
+      const res = await apiRequest('/api/v1/friends');
+      friends = res.friends || [];
+      renderFriends();
+      logDebug('好友列表: ' + JSON.stringify(friends));
+    } catch (e) {
+      logDebug('获取好友列表失败: ' + e.message);
+      alert('获取好友列表失败: ' + e.message);
+    }
+  }
+  el('loadFriendsBtn').onclick = loadFriends;
+
+  // 选择好友，拉历史
+  async function selectPeer(peerId) {
+    currentPeerId = peerId;
+    el('currentPeer').textContent = peerId ? ('用户 #' + peerId) : '未选择';
+    el('peerIdInput').value = peerId || '';
+    renderFriends();
+    clearMessages();
+    if (!peerId) return;
+    try {
+      const res = await apiRequest('/api/v1/messages?with=' + encodeURIComponent(peerId));
+      const msgs = res.messages || [];
+      msgs.forEach(m => {
+        const isMe = currentUser && m.from_user_id === currentUser.id;
+        appendMessage({ content: m.content }, isMe);
+      });
+      logDebug(`拉取历史消息 ${msgs.length} 条 with=${peerId}`);
+    } catch (e) {
+      logDebug('获取历史消息失败: ' + e.message);
+      alert('获取历史消息失败: ' + e.message);
+    }
+  }
+
+  // 连接 WebSocket
+  el('connectWsBtn').onclick = () => {
+    if (!authToken) {
+      alert('请先登录以获取 token');
+      return;
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      alert('WebSocket 已连接');
+      return;
+    }
+    const wsUrl = `ws://localhost:8080/ws?token=${encodeURIComponent(authToken)}`;
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      setWsStatus('已连接', true);
+      logDebug('WebSocket 已连接');
     };
-
-    document.getElementById('sendBtn').onclick = function () {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        alert('WebSocket 尚未连接');
-        return;
-      }
-      const toUserId = document.getElementById('toUserId').value.trim();
-      const message = document.getElementById('message').value.trim();
-      if (!toUserId || !message) {
-        alert('请填写接收方 ID 和消息内容');
-        return;
-      }
-      const payload = {
-        to: Number(toUserId),
-        content: message,
-      };
-      ws.send(JSON.stringify(payload));
-      log('发送消息：' + JSON.stringify(payload));
+    ws.onclose = () => {
+      setWsStatus('已断开', false);
+      logDebug('WebSocket 已断开');
     };
-  </script>
+    ws.onerror = (e) => {
+      setWsStatus('错误', false);
+      logDebug('WebSocket 错误（见控制台）');
+      console.error(e);
+    };
+    ws.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (data.error) {
+          logDebug('WS 错误消息: ' + data.error);
+          alert('WS 错误: ' + data.error);
+          return;
+        }
+        const from = data.from;
+        const content = data.content;
+        if (!currentPeerId || currentPeerId !== from) {
+          // 简单起见：若不是当前会话，只当作提示
+          logDebug(`收到来自 ${from} 的消息（非当前会话）: ${content}`);
+        }
+        appendMessage({ content }, false);
+      } catch (e) {
+        logDebug('WS 收到非 JSON: ' + evt.data);
+      }
+    };
+  };
+
+  // 发送消息
+  async function sendMessage() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      alert('WebSocket 尚未连接');
+      return;
+    }
+    const content = el('msgInput').value.trim();
+    if (!content) return;
+    let peerId = currentPeerId;
+    const manual = el('peerIdInput').value.trim();
+    if (manual) peerId = Number(manual);
+    if (!peerId) {
+      alert('请先选择好友或填对方用户 ID');
+      return;
+    }
+    const payload = { to: Number(peerId), content };
+    ws.send(JSON.stringify(payload));
+    appendMessage({ content }, true);
+    el('msgInput').value = '';
+    logDebug('WS 发送: ' + JSON.stringify(payload));
+  }
+
+  el('sendMsgBtn').onclick = sendMessage;
+  el('msgInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // 初始的小提示
+  logDebug('1. 先用 user-service 的账号在这里注册/登录');
+  logDebug('2. 登录后添加对方为好友，并刷新好友列表');
+  logDebug('3. 连接 WebSocket，选择好友或填对方 ID 聊天');
+</script>
 </body>
 </html>

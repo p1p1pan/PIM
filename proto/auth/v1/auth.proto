@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "pim/internal/auth/pb;pbauth";
+
+service AuthService {
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+}
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  uint64 user_id = 1;
+}

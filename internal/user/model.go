@@ -2,6 +2,7 @@ package user
 
 import "time"
 
+// User 用户
 type User struct {
     ID       uint   `gorm:"primaryKey" json:"id"`
     Username string `gorm:"unique;not null" json:"username"`
@@ -13,6 +14,7 @@ type User struct {
     UpdatedAt time.Time `json:"updated_at"`
 }
 
+// LoginRequest 登录请求
 type LoginRequest struct {
     Username string `json:"username" binding:"required"`
     Password string `json:"password" binding:"required"`

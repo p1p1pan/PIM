@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "pim/internal/user/pb;pbuser";
+
+service UserService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc GetByID(GetByIDRequest) returns (GetByIDResponse);
+}
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message RegisterResponse {
+  string message = 1;
+  User user = 2;
+}
+
+message GetByIDRequest {
+  uint64 user_id = 1;
+}
+
+message GetByIDResponse {
+  User user = 1;
+}
+
+message User {
+  uint64 id = 1;
+  string username = 2;
+  string nickname = 3;
+  string avatar_url = 4;
+  string bio = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+}
