@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-
-	authsvc "pim/internal/auth"
+	"google.golang.org/grpc"
+	
+	pbconversation "pim/internal/conversation/pb"
 	"pim/internal/config"
 	"pim/internal/conversation"
 )
@@ -33,14 +35,24 @@ func main() {
 		log.Fatalf("Failed to migrate message table: %v", err)
 	}
 
-	authGroup := r.Group("/api/v1", authsvc.AuthMiddleware())
-	conversation.RegisterRoutes(r, authGroup, db) 
+	// grpc server
+	grpcServer := grpc.NewServer()
+	pbconversation.RegisterConversationServiceServer(grpcServer, conversation.NewGRPCConversationServer(db))
+	listener, err := net.Listen("tcp", ":9013")
+	if err != nil {
+		log.Fatalf("Failed to listen: %v", err)
+	}
+	go func() {
+		if err := grpcServer.Serve(listener); err != nil {
+			log.Fatalf("Failed to serve: %v", err)
+		}
+	}()
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	log.Println("conversation-service listening on :9003")
+	log.Println("conversation-service gRPC :9013, health :9003")
 	if err := r.Run(":9003"); err != nil {
 		log.Fatal(err)
 	}

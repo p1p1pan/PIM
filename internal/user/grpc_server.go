@@ -16,6 +16,7 @@ type GRPCUserServer struct {
 	pbuser.UnimplementedUserServiceServer
 	svc *Service
 }
+
 // Register 注册用户
 func (s *GRPCUserServer) Register(ctx context.Context, req *pbuser.RegisterRequest) (*pbuser.RegisterResponse, error) {
 	if req == nil || req.Username == "" || req.Password == "" {
@@ -27,7 +28,7 @@ func (s *GRPCUserServer) Register(ctx context.Context, req *pbuser.RegisterReque
 	}
 	return &pbuser.RegisterResponse{
 		Message: "User registered successfully",
-		User: userToPB(u),
+		User:    userToPB(u),
 	}, nil
 }
 
@@ -43,11 +44,30 @@ func (s *GRPCUserServer) GetByID(ctx context.Context, req *pbuser.GetByIDRequest
 	return &pbuser.GetByIDResponse{User: userToPB(u)}, nil
 }
 
+// Login 登录用户
+func (s *GRPCUserServer) Login(ctx context.Context, req *pbuser.LoginRequest) (*pbuser.LoginResponse, error) {
+	// 验证请求
+	if req == nil || req.Username == "" || req.Password == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "username and password are required")
+	}
+	// 调用服务
+	u, token, err := s.svc.Login(req.Username, req.Password)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "%v", err)
+	}
+	// 返回响应
+	return &pbuser.LoginResponse{
+		Message: "Login successful",
+		Token:   token,
+		User:    userToPB(u),
+	}, nil
+}
 
 // NewGRPCUserServer 用 db 构造 gRPC 服务端，供 cmd/user-service 注册。
 func NewGRPCUserServer(db *gorm.DB) *GRPCUserServer {
 	return &GRPCUserServer{svc: NewService(db)}
 }
+
 // userToPB 把 internal User 转成 pb User（不含密码），时间用 Unix 秒。
 func userToPB(u *User) *pbuser.User {
 	if u == nil {

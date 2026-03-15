@@ -7,6 +7,7 @@ option go_package = "pim/internal/user/pb;pbuser";
 service UserService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc GetByID(GetByIDRequest) returns (GetByIDResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
 }
 
 message RegisterRequest {
@@ -35,4 +36,14 @@ message User {
   string bio = 5;
   int64 created_at = 6;
   int64 updated_at = 7;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+message LoginResponse {
+  string message = 1;
+  string token = 2;
+  User user = 3;
 }

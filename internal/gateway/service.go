@@ -4,6 +4,8 @@ package gateway
 import (
 	"github.com/gin-gonic/gin"
 
+	pbconversation "pim/internal/conversation/pb"
+	pbfriend "pim/internal/friend/pb"
 	pbuser "pim/internal/user/pb"
 )
 
@@ -20,5 +22,30 @@ func UserFromPB(u *pbuser.User) gin.H {
 		"bio":        u.Bio,
 		"created_at": u.CreatedAt,
 		"updated_at": u.UpdatedAt,
+	}
+}
+
+func FriendFromPB(f *pbfriend.Friend) gin.H {
+	if f == nil {
+		return nil
+	}
+	return gin.H{
+		"id":         f.Id,
+		"user_id":    f.UserId,
+		"friend_id":  f.FriendId,
+		"created_at": f.CreatedAt,
+	}
+}
+
+func MessageFromPB(m *pbconversation.Message) gin.H {
+	if m == nil {
+		return nil
+	}
+	return gin.H{
+		"id":           m.Id,
+		"from_user_id": m.FromUserId,
+		"to_user_id":   m.ToUserId,
+		"content":      m.Content,
+		"created_at":   m.CreatedAt,
 	}
 }

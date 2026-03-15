@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package conversation.v1;
+
+option go_package = "pim/internal/conversation/pb;pbconversation";
+
+service ConversationService {
+  rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+}
+
+message ListMessagesRequest {
+  uint64 user_id = 1;   // 当前用户
+  uint64 other_id = 2;  // 对方用户（与 user_id 之间的历史消息）
+}
+
+message ListMessagesResponse {
+  repeated Message messages = 1;
+}
+
+message SendMessageRequest {
+  uint64 from_user_id = 1;
+  uint64 to_user_id = 2;
+  string content = 3;
+}
+
+message SendMessageResponse {
+  Message message = 1;
+}
+
+message Message {
+  uint64 id = 1;
+  uint64 from_user_id = 2;
+  uint64 to_user_id = 3;
+  string content = 4;
+  int64 created_at = 5;
+}

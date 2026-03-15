@@ -1,17 +1,20 @@
 package conversation
 
 import (
-	"errors"
+	"context"
 	"log"
 	"net/http"
 	"strconv"
 	"sync"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
 
-	"pim/internal/friend"
+	pbconversation "pim/internal/conversation/pb"
 )
 
 // WebSocket 升级与连接表：upgrader 将 HTTP 升级为 WebSocket；wsConnections 按 userID 存当前在线连接，供推送用。
@@ -53,21 +56,22 @@ func RegisterRoutes(r *gin.Engine, authGroup *gin.RouterGroup, db *gorm.DB) {
 
 // WebSocketHandler 供 Gateway 挂在 GET /ws 上（需先挂 AuthMiddleware）。流程：鉴权后取 userID → Upgrade 为 WebSocket →
 // 将 conn 存入 wsConnections[userID] → 循环 ReadJSON 收客户端消息，校验好友、落库、若对方在线则从 wsConnections 取 conn 推送。
-func WebSocketHandler(db *gorm.DB) gin.HandlerFunc {
+func WebSocketHandler(client pbconversation.ConversationServiceClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userIDVal, _ := c.Get("userID")
 		userID := userIDVal.(uint)
-
+		// 升级为 WebSocket
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("Failed to upgrade to WebSocket: %v", err)
 			return
 		}
+		// 将连接存入 wsConnections
 		wsMu.Lock()
 		wsConnections[userID] = conn
 		wsMu.Unlock()
 		log.Printf("User %d connected to WebSocket", userID)
-
+		// 循环读取客户端消息
 		for {
 			var msg struct {
 				To      uint   `json:"to"`
@@ -77,34 +81,28 @@ func WebSocketHandler(db *gorm.DB) gin.HandlerFunc {
 				log.Printf("Failed to read JSON: %v", err)
 				break
 			}
-
-			var fr friend.Friend
-			if err := db.Where("user_id = ? AND friend_id = ?", userID, msg.To).First(&fr).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 调用 gRPC 发送消息
+			_, err := client.SendMessage(context.Background(), &pbconversation.SendMessageRequest{
+				FromUserId: uint64(userID),
+				ToUserId:   uint64(msg.To),
+				Content:    msg.Content,
+			})
+			// 处理错误
+			if err != nil {
+				if st, ok := status.FromError(err); ok && st.Code() == codes.PermissionDenied {
 					_ = conn.WriteJSON(gin.H{
 						"error": "not friends, cannot send message",
 						"to":    msg.To,
 					})
 					continue
 				}
-				log.Printf("Failed to check if user %d is friend of user %d: %v", userID, msg.To, err)
+				log.Printf("Failed to send message via gRPC: %v", err)
 				continue
 			}
-
-			m := Message{
-				FromUserID: userID,
-				ToUserID:   msg.To,
-				Content:    msg.Content,
-			}
-			if err := db.Create(&m).Error; err != nil {
-				log.Printf("Failed to create message: %v", err)
-				break
-			}
-
+			// 从 wsConnections 取连接并发送消息
 			wsMu.RLock()
 			toConn := wsConnections[msg.To]
 			wsMu.RUnlock()
-
 			if toConn != nil {
 				out := struct {
 					From    uint   `json:"from"`
@@ -121,6 +119,7 @@ func WebSocketHandler(db *gorm.DB) gin.HandlerFunc {
 			log.Printf("Message sent to user %d", msg.To)
 		}
 
+		// 删除连接
 		wsMu.Lock()
 		delete(wsConnections, userID)
 		wsMu.Unlock()
