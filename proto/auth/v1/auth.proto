@@ -5,6 +5,9 @@ package auth.v1;
 option go_package = "pim/internal/auth/pb;pbauth";
 
 service AuthService {
+  // 新增：登录
+  rpc Login(LoginRequest) returns (LoginResponse);
+
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
 }
 
@@ -14,4 +17,17 @@ message ValidateTokenRequest {
 
 message ValidateTokenResponse {
   uint64 user_id = 1;
+}
+
+// 新增：登录请求/响应
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string message = 1;
+  string access_token = 2;
+  uint64 user_id = 3;
+  string username = 4;
 }

@@ -1,13 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"net"
+	"net/http"
 
-	"google.golang.org/grpc"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -17,6 +19,7 @@ import (
 )
 
 func main() {
+	// database
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		config.DBHost,
@@ -32,12 +35,23 @@ func main() {
 	if err := db.AutoMigrate(&friend.Friend{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
+	// redis client
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     config.RedisAddr,
+		Password: config.RedisPassword,
+		DB:       config.RedisDB,
+	})
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("Failed to connect to redis: %v", err)
+	}
+	defer rdb.Close()
+	log.Printf("RedisAddr from config: %s", config.RedisAddr)
 
 	r := gin.Default()
 	// grpc server
 	// friend service
 	grpcServer := grpc.NewServer()
-	pbfriend.RegisterFriendServiceServer(grpcServer, friend.NewGRPCFriendServer(db))
+	pbfriend.RegisterFriendServiceServer(grpcServer, friend.NewGRPCFriendServer(db, rdb))
 	listener, err := net.Listen("tcp", ":9012")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
