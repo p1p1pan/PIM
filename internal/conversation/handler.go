@@ -4,15 +4,12 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"strconv"
 	"sync"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"gorm.io/gorm"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pbconversation "pim/internal/conversation/pb"
 )
@@ -28,31 +25,7 @@ var (
 	wsMu          sync.RWMutex
 )
 
-// RegisterRoutes 在 authGroup 上注册 GET /messages；authGroup 需已挂 auth 鉴权，c.Get("userID") 为当前用户。
-func RegisterRoutes(r *gin.Engine, authGroup *gin.RouterGroup, db *gorm.DB) {
-	// 历史消息：query with=<对方用户ID>，查两人之间的消息按时间升序返回。
-	authGroup.GET("/messages", func(c *gin.Context) {
-		userIDVal, _ := c.Get("userID")
-		userID := userIDVal.(uint)
-		otherIDStr := c.Query("with")
-		if otherIDStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing or invalid with parameter"})
-			return
-		}
-		otherIDUint, err := strconv.ParseUint(otherIDStr, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid with parameter"})
-			return
-		}
-		otherID := uint(otherIDUint)
-		var messages []Message
-		if err := db.Where("(from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)", userID, otherID, otherID, userID).Order("created_at ASC").Find(&messages).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get messages"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"messages": messages})
-	})
-}
+// RegisterRoutes 已移除：GET /messages 现由 Gateway 直接调 conversation gRPC 处理。
 
 // WebSocketHandler 供 Gateway 挂在 GET /ws 上（需先挂 AuthMiddleware）。流程：鉴权后取 userID → Upgrade 为 WebSocket →
 // 将 conn 存入 wsConnections[userID] → 循环 ReadJSON 收客户端消息，校验好友、落库、若对方在线则从 wsConnections 取 conn 推送。

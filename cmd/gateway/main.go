@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,8 +10,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	pbauth "pim/internal/auth/pb"
 	pbconversation "pim/internal/conversation/pb"
@@ -20,36 +17,14 @@ import (
 	pbuser "pim/internal/user/pb"
 
 	authsvc "pim/internal/auth"
-	"pim/internal/config"
 	"pim/internal/conversation"
-	"pim/internal/friend"
 	"pim/internal/gateway"
-	"pim/internal/user"
 )
 
 func main() {
 	r := gin.Default()
 	// 添加 CORS 中间件
 	r.Use(CORSMiddleware())
-	// 从 internal/config/config.go 获取配置信息
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DBHost,
-		config.DBPort,
-		config.DBUser,
-		config.DBPassword,
-		config.DBName,
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-	log.Println("Connected to database")
-
-	// 迁移数据库表
-	if err := db.AutoMigrate(&user.User{}, &friend.Friend{}); err != nil {
-		log.Fatalf("Failed to migrate database: %v", err)
-	}
 
 	// grpc client
 	// auth service
@@ -268,87 +243,3 @@ func CORSMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
-/* proxyFriendService 将当前请求转发到 friend-service（端口 9002），并把响应原样写回客户端。
-func proxyFriendService(c *gin.Context, method, path string) {
-	url := "http://localhost:9002" + path
-	req, err := http.NewRequest(method, url, c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-		return
-	}
-	// 设置请求头
-	req.Header = c.Request.Header.Clone()
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send request"})
-		return
-	}
-	// 关闭响应体
-	defer resp.Body.Close()
-	c.DataFromReader(resp.StatusCode, resp.ContentLength, resp.Header.Get("Content-Type"), io.Reader(resp.Body),
-		map[string]string{
-			"Content-Type": resp.Header.Get("Content-Type")})
-}
-*/
-
-/* proxyConversationService 将当前请求（含 query）转发到 conversation-service（端口 9003），并把响应原样写回。
-func proxyConversationService(c *gin.Context, method, path string) {
-	url := "http://localhost:9003" + path
-    if qs := c.Request.URL.RawQuery; qs != "" {
-        url = url + "?" + qs
-    }
-
-    req, err := http.NewRequest(method, url, c.Request.Body)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-        return
-    }
-    req.Header = c.Request.Header.Clone()
-
-    client := &http.Client{}
-    resp, err := client.Do(req)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send request"})
-        return
-    }
-    defer resp.Body.Close()
-
-    c.DataFromReader(
-        resp.StatusCode,
-        resp.ContentLength,
-        resp.Header.Get("Content-Type"),
-        resp.Body,
-        map[string]string{"Content-Type": resp.Header.Get("Content-Type")},
-    )
-}
-*/
-
-/* proxyUserService 将当前请求原样转发到 user-service（端口 9001），仅登录仍使用；注册、/me 已走 gRPC。
-func proxyUserService(c *gin.Context, method, path string) {
-	url := "http://localhost:9001" + path
-	// 创建请求
-	req, err := http.NewRequest(method, url, c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-		return
-	}
-	// 设置请求头
-	req.Header = c.Request.Header.Clone()
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send request"})
-		return
-	}
-	// 关闭响应体
-	defer resp.Body.Close()
-	// 将响应体数据返回给客户端
-	c.DataFromReader(resp.StatusCode, resp.ContentLength, resp.Header.Get("Content-Type"), io.Reader(resp.Body),
-		map[string]string{
-			"Content-Type": resp.Header.Get("Content-Type")})
-}
-*/
