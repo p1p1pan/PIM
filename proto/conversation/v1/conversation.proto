@@ -7,6 +7,7 @@ option go_package = "pim/internal/conversation/pb;pbconversation";
 service ConversationService {
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse);
 }
 
 message ListMessagesRequest {
@@ -34,4 +35,19 @@ message Message {
   uint64 to_user_id = 3;
   string content = 4;
   int64 created_at = 5;
+}
+
+message ListConversationsRequest {
+  uint64 user_id = 1;
+}
+message ConversationSummary {
+  uint64 id              = 1;
+  uint64 user_a          = 2;
+  uint64 user_b          = 3;
+  uint64 last_message_id = 4;
+  uint64 last_seq        = 5;
+  int64  last_message_at = 6; // unix 秒
+}
+message ListConversationsResponse {
+  repeated ConversationSummary conversations = 1;
 }

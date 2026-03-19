@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option go_package = "pim/internal/gateway/pb;pbgateway";
+
+// 仅内部使用的推送服务：Gateway 收到请求后，将消息写到对应用户的 WebSocket 上。
+service PushService {
+  rpc PushToConn(PushToConnRequest) returns (PushToConnResponse);
+}
+
+message PushToConnRequest {
+  uint64 from_user_id = 1; // 谁发送的
+  uint64 to_user_id   = 2; // 推给谁
+  string content      = 3; // 文本内容
+}
+
+message PushToConnResponse {
+  bool   ok    = 1; // 是否写入成功（包括“线上但写失败”等）
+  string error = 2; // 失败原因，ok=false 时可读
+}

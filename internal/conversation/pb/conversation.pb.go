@@ -297,6 +297,178 @@ func (x *Message) GetCreatedAt() int64 {
 	return 0
 }
 
+type ListConversationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        uint64                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsRequest) Reset() {
+	*x = ListConversationsRequest{}
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsRequest) ProtoMessage() {}
+
+func (x *ListConversationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsRequest.ProtoReflect.Descriptor instead.
+func (*ListConversationsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_conversation_v1_conversation_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListConversationsRequest) GetUserId() uint64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+type ConversationSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserA         uint64                 `protobuf:"varint,2,opt,name=user_a,json=userA,proto3" json:"user_a,omitempty"`
+	UserB         uint64                 `protobuf:"varint,3,opt,name=user_b,json=userB,proto3" json:"user_b,omitempty"`
+	LastMessageId uint64                 `protobuf:"varint,4,opt,name=last_message_id,json=lastMessageId,proto3" json:"last_message_id,omitempty"`
+	LastSeq       uint64                 `protobuf:"varint,5,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	LastMessageAt int64                  `protobuf:"varint,6,opt,name=last_message_at,json=lastMessageAt,proto3" json:"last_message_at,omitempty"` // unix 秒
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConversationSummary) Reset() {
+	*x = ConversationSummary{}
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConversationSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConversationSummary) ProtoMessage() {}
+
+func (x *ConversationSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConversationSummary.ProtoReflect.Descriptor instead.
+func (*ConversationSummary) Descriptor() ([]byte, []int) {
+	return file_proto_conversation_v1_conversation_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ConversationSummary) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ConversationSummary) GetUserA() uint64 {
+	if x != nil {
+		return x.UserA
+	}
+	return 0
+}
+
+func (x *ConversationSummary) GetUserB() uint64 {
+	if x != nil {
+		return x.UserB
+	}
+	return 0
+}
+
+func (x *ConversationSummary) GetLastMessageId() uint64 {
+	if x != nil {
+		return x.LastMessageId
+	}
+	return 0
+}
+
+func (x *ConversationSummary) GetLastSeq() uint64 {
+	if x != nil {
+		return x.LastSeq
+	}
+	return 0
+}
+
+func (x *ConversationSummary) GetLastMessageAt() int64 {
+	if x != nil {
+		return x.LastMessageAt
+	}
+	return 0
+}
+
+type ListConversationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Conversations []*ConversationSummary `protobuf:"bytes,1,rep,name=conversations,proto3" json:"conversations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsResponse) Reset() {
+	*x = ListConversationsResponse{}
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsResponse) ProtoMessage() {}
+
+func (x *ListConversationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_conversation_v1_conversation_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsResponse.ProtoReflect.Descriptor instead.
+func (*ListConversationsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_conversation_v1_conversation_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListConversationsResponse) GetConversations() []*ConversationSummary {
+	if x != nil {
+		return x.Conversations
+	}
+	return nil
+}
+
 var File_proto_conversation_v1_conversation_proto protoreflect.FileDescriptor
 
 const file_proto_conversation_v1_conversation_proto_rawDesc = "" +
@@ -323,10 +495,22 @@ const file_proto_conversation_v1_conversation_proto_rawDesc = "" +
 	"to_user_id\x18\x03 \x01(\x04R\btoUserId\x12\x18\n" +
 	"\acontent\x18\x04 \x01(\tR\acontent\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\x03R\tcreatedAt2\xcc\x01\n" +
+	"created_at\x18\x05 \x01(\x03R\tcreatedAt\"3\n" +
+	"\x18ListConversationsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x04R\x06userId\"\xbe\x01\n" +
+	"\x13ConversationSummary\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x15\n" +
+	"\x06user_a\x18\x02 \x01(\x04R\x05userA\x12\x15\n" +
+	"\x06user_b\x18\x03 \x01(\x04R\x05userB\x12&\n" +
+	"\x0flast_message_id\x18\x04 \x01(\x04R\rlastMessageId\x12\x19\n" +
+	"\blast_seq\x18\x05 \x01(\x04R\alastSeq\x12&\n" +
+	"\x0flast_message_at\x18\x06 \x01(\x03R\rlastMessageAt\"g\n" +
+	"\x19ListConversationsResponse\x12J\n" +
+	"\rconversations\x18\x01 \x03(\v2$.conversation.v1.ConversationSummaryR\rconversations2\xb8\x02\n" +
 	"\x13ConversationService\x12[\n" +
 	"\fListMessages\x12$.conversation.v1.ListMessagesRequest\x1a%.conversation.v1.ListMessagesResponse\x12X\n" +
-	"\vSendMessage\x12#.conversation.v1.SendMessageRequest\x1a$.conversation.v1.SendMessageResponseB-Z+pim/internal/conversation/pb;pbconversationb\x06proto3"
+	"\vSendMessage\x12#.conversation.v1.SendMessageRequest\x1a$.conversation.v1.SendMessageResponse\x12j\n" +
+	"\x11ListConversations\x12).conversation.v1.ListConversationsRequest\x1a*.conversation.v1.ListConversationsResponseB-Z+pim/internal/conversation/pb;pbconversationb\x06proto3"
 
 var (
 	file_proto_conversation_v1_conversation_proto_rawDescOnce sync.Once
@@ -340,26 +524,32 @@ func file_proto_conversation_v1_conversation_proto_rawDescGZIP() []byte {
 	return file_proto_conversation_v1_conversation_proto_rawDescData
 }
 
-var file_proto_conversation_v1_conversation_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_proto_conversation_v1_conversation_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_conversation_v1_conversation_proto_goTypes = []any{
-	(*ListMessagesRequest)(nil),  // 0: conversation.v1.ListMessagesRequest
-	(*ListMessagesResponse)(nil), // 1: conversation.v1.ListMessagesResponse
-	(*SendMessageRequest)(nil),   // 2: conversation.v1.SendMessageRequest
-	(*SendMessageResponse)(nil),  // 3: conversation.v1.SendMessageResponse
-	(*Message)(nil),              // 4: conversation.v1.Message
+	(*ListMessagesRequest)(nil),       // 0: conversation.v1.ListMessagesRequest
+	(*ListMessagesResponse)(nil),      // 1: conversation.v1.ListMessagesResponse
+	(*SendMessageRequest)(nil),        // 2: conversation.v1.SendMessageRequest
+	(*SendMessageResponse)(nil),       // 3: conversation.v1.SendMessageResponse
+	(*Message)(nil),                   // 4: conversation.v1.Message
+	(*ListConversationsRequest)(nil),  // 5: conversation.v1.ListConversationsRequest
+	(*ConversationSummary)(nil),       // 6: conversation.v1.ConversationSummary
+	(*ListConversationsResponse)(nil), // 7: conversation.v1.ListConversationsResponse
 }
 var file_proto_conversation_v1_conversation_proto_depIdxs = []int32{
 	4, // 0: conversation.v1.ListMessagesResponse.messages:type_name -> conversation.v1.Message
 	4, // 1: conversation.v1.SendMessageResponse.message:type_name -> conversation.v1.Message
-	0, // 2: conversation.v1.ConversationService.ListMessages:input_type -> conversation.v1.ListMessagesRequest
-	2, // 3: conversation.v1.ConversationService.SendMessage:input_type -> conversation.v1.SendMessageRequest
-	1, // 4: conversation.v1.ConversationService.ListMessages:output_type -> conversation.v1.ListMessagesResponse
-	3, // 5: conversation.v1.ConversationService.SendMessage:output_type -> conversation.v1.SendMessageResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	6, // 2: conversation.v1.ListConversationsResponse.conversations:type_name -> conversation.v1.ConversationSummary
+	0, // 3: conversation.v1.ConversationService.ListMessages:input_type -> conversation.v1.ListMessagesRequest
+	2, // 4: conversation.v1.ConversationService.SendMessage:input_type -> conversation.v1.SendMessageRequest
+	5, // 5: conversation.v1.ConversationService.ListConversations:input_type -> conversation.v1.ListConversationsRequest
+	1, // 6: conversation.v1.ConversationService.ListMessages:output_type -> conversation.v1.ListMessagesResponse
+	3, // 7: conversation.v1.ConversationService.SendMessage:output_type -> conversation.v1.SendMessageResponse
+	7, // 8: conversation.v1.ConversationService.ListConversations:output_type -> conversation.v1.ListConversationsResponse
+	6, // [6:9] is the sub-list for method output_type
+	3, // [3:6] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_conversation_v1_conversation_proto_init() }
@@ -373,7 +563,7 @@ func file_proto_conversation_v1_conversation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_conversation_v1_conversation_proto_rawDesc), len(file_proto_conversation_v1_conversation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

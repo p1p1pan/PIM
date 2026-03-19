@@ -14,8 +14,11 @@ import (
 	"gorm.io/gorm"
 
 	"pim/internal/config"
-	"pim/internal/friend"
+	friendhandler "pim/internal/friend/handler"
+	friendmodel "pim/internal/friend/model"
 	pbfriend "pim/internal/friend/pb"
+	friendrepo "pim/internal/friend/repo"
+	friendservice "pim/internal/friend/service"
 )
 
 func main() {
@@ -32,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	if err := db.AutoMigrate(&friend.Friend{}); err != nil {
+	if err := db.AutoMigrate(&friendmodel.Friend{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
 	// redis client
@@ -51,7 +54,8 @@ func main() {
 	// grpc server
 	// friend service
 	grpcServer := grpc.NewServer()
-	pbfriend.RegisterFriendServiceServer(grpcServer, friend.NewGRPCFriendServer(db, rdb))
+	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb))
+	pbfriend.RegisterFriendServiceServer(grpcServer, friendhandler.NewGRPCFriendServer(friendSvc))
 	listener, err := net.Listen("tcp", ":9012")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)

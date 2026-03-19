@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"pim/internal/auth"
+	authhandler "pim/internal/auth/handler"
 	pbauth "pim/internal/auth/pb"
 	"pim/internal/config"
 	pbuser "pim/internal/user/pb"
@@ -40,7 +40,7 @@ func main() {
 
 	// auth service
 	grpcServer := grpc.NewServer()
-	pbauth.RegisterAuthServiceServer(grpcServer, auth.NewGRPCAuthServer(userClient))
+	pbauth.RegisterAuthServiceServer(grpcServer, authhandler.NewGRPCAuthServer(userClient))
 	listener, err := net.Listen("tcp", ":9005")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)

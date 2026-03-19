@@ -15,7 +15,10 @@ import (
 	"gorm.io/gorm"
 
 	"pim/internal/config"
-	"pim/internal/user"
+	userhandler "pim/internal/user/handler"
+	usermodel "pim/internal/user/model"
+	userrepo "pim/internal/user/repo"
+	userservice "pim/internal/user/service"
 )
 
 func main() {
@@ -31,13 +34,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	if err := db.AutoMigrate(&user.User{}); err != nil {
+	if err := db.AutoMigrate(&usermodel.User{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
 
 	// grpc server
 	grpcServer := grpc.NewServer()
-	pbuser.RegisterUserServiceServer(grpcServer, user.NewGRPCUserServer(db))
+	userSvc := userservice.NewService(userrepo.NewUserRepo(db))
+	pbuser.RegisterUserServiceServer(grpcServer, userhandler.NewGRPCUserServer(userSvc))
 	listener, err := net.Listen("tcp", ":9011")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
