@@ -10,9 +10,10 @@
 
 # Test binary, built with `go test -c`
 *.test
-
 # Doc files
 *.doc/
+doc/
+
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
@@ -31,4 +32,4 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.cursor/
