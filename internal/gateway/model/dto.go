@@ -24,3 +24,16 @@ type ConversationReadEvent struct {
 	PeerID         uint   `json:"peer_id"`
 	ConversationID string `json:"conversation_id"`
 }
+
+// SendFriendRequestRequest 是发送好友申请请求体。
+type SendFriendRequestRequest struct {
+	ToUserID uint   `json:"to_user_id"`
+	Remark   string `json:"remark"`
+}
+
+// ListFriendRequestsQuery 是好友申请列表查询参数。
+type ListFriendRequestsQuery struct {
+	Status string `form:"status"` // pending/accepted/rejected/cancelled，空表示全部
+	Cursor uint64 `form:"cursor"` // 基于 request_id 的游标
+	Limit  uint32 `form:"limit"`  // 默认20，最大50
+}

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -106,11 +107,16 @@ func (s *HTTPServer) RegisterRoutes(r *gin.Engine) {
 	r.POST("/api/v1/register", s.handleRegister)
 
 	authGroup.GET("/me", s.handleMe)
-	authGroup.POST("/friends", s.handleAddFriend)
 	authGroup.GET("/friends", s.handleListFriends)
 	authGroup.GET("/conversations", s.handleListConversations)
 	authGroup.GET("/messages", s.handleListMessages)
 	authGroup.PUT("/conversations/:peer_id/read", s.handleConversationRead)
+	authGroup.POST("/friends/requests", s.handleSendFriendRequest)
+	authGroup.POST("/friends/requests/:id/approve", s.handleApproveFriendRequest)
+	authGroup.POST("/friends/requests/:id/reject", s.handleRejectFriendRequest)
+	authGroup.POST("/friends/blacklist/:user_id", s.handleBlockUser)
+	authGroup.GET("/friends/requests/incoming", s.handleListIncomingFriendRequests)
+	authGroup.GET("/friends/requests/outgoing", s.handleListOutgoingFriendRequests)
 }
 
 // handleWS 处理 WebSocket 升级、在线连接登记与上行转发。
@@ -191,23 +197,6 @@ func (s *HTTPServer) handleMe(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": gatewayservice.UserFromPB(resp.User)})
-}
-
-// handleAddFriend 处理添加好友请求。
-func (s *HTTPServer) handleAddFriend(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
-	var req gatewaymodel.AddFriendRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	_, err := s.friendClient.AddFriend(ctxWithTrace(c), &pbfriend.AddFriendRequest{UserId: uint64(userID), FriendId: uint64(req.FriendID)})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Friend added successfully"})
 }
 
 // handleListFriends 查询好友列表。
@@ -320,4 +309,322 @@ func (s *HTTPServer) handleConversationRead(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "read event queued", "conversation_id": convKey})
+}
+
+// handleSendFriendRequest 发送好友申请。
+func (s *HTTPServer) handleSendFriendRequest(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	fromUserID := userIDVal.(uint)
+	// 非法请求
+	var req gatewaymodel.SendFriendRequestRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.ToUserID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	// 发送好友申请
+	resp, err := s.friendClient.SendFriendRequest(ctxWithTrace(c), &pbfriend.SendFriendRequestRequest{
+		FromUserId: uint64(fromUserID),
+		ToUserId:   uint64(req.ToUserID),
+		Remark:     req.Remark,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 尝试实时通知被申请方（若对方当前不在线，忽略推送错误，不影响主流程）。
+	s.pushFriendRequestEvent(
+		c,
+		req.ToUserID,
+		"friend_request_created",
+		resp.GetRequestId(),
+		uint64(fromUserID),
+		uint64(req.ToUserID),
+		resp.GetStatus(),
+		req.Remark,
+	)
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"request_id": resp.GetRequestId(),
+		"status":     resp.GetStatus(),
+	})
+}
+
+// handleApproveFriendRequest 同意好友申请。
+func (s *HTTPServer) handleApproveFriendRequest(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	operatorUserID := userIDVal.(uint)
+	// 非法请求
+	reqIDStr := c.Param("id")
+	reqID, err := strconv.ParseUint(reqIDStr, 10, 64)
+	if err != nil || reqID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request id"})
+		return
+	}
+	// 查询好友申请详情
+	detail, err := s.friendClient.GetFriendRequestByID(ctxWithTrace(c), &pbfriend.GetFriendRequestByIDRequest{
+		RequestId: reqID,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			if st.Code() == codes.NotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": st.Message()})
+				return
+			}
+			if st.Code() == codes.InvalidArgument {
+				c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 转换为 gin.H 对象
+	item := detail.GetItem()
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "friend request not found"})
+		return
+	}
+
+	// 同意好友申请
+	resp, err := s.friendClient.ApproveFriendRequest(ctxWithTrace(c), &pbfriend.ApproveFriendRequestRequest{
+		RequestId:      reqID,
+		OperatorUserId: uint64(operatorUserID),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 成功后给双方推 updated 事件
+	fromID := item.GetFromUserId()
+	toID := item.GetToUserId()
+	s.pushFriendRequestEvent(
+		c,
+		uint(toID),
+		"friend_request_updated",
+		reqID,
+		fromID,
+		toID,
+		"accepted",
+		item.GetRemark(),
+	)
+	s.pushFriendRequestEvent(
+		c,
+		uint(fromID),
+		"friend_request_updated",
+		reqID,
+		fromID,
+		toID,
+		"accepted",
+		item.GetRemark(),
+	)
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{"message": resp.GetMessage()})
+}
+
+// handleRejectFriendRequest 拒绝好友申请。
+func (s *HTTPServer) handleRejectFriendRequest(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	operatorUserID := userIDVal.(uint)
+	// 非法请求
+	reqIDStr := c.Param("id")
+	reqID, err := strconv.ParseUint(reqIDStr, 10, 64)
+	if err != nil || reqID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request id"})
+		return
+	}
+	// 先查申请详情
+	detail, err := s.friendClient.GetFriendRequestByID(ctxWithTrace(c), &pbfriend.GetFriendRequestByIDRequest{
+		RequestId: reqID,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			if st.Code() == codes.NotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": st.Message()})
+				return
+			}
+			if st.Code() == codes.InvalidArgument {
+				c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 转换为 gin.H 对象
+	item := detail.GetItem()
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "friend request not found"})
+		return
+	}
+	// 拒绝好友申请
+	resp, err := s.friendClient.RejectFriendRequest(ctxWithTrace(c), &pbfriend.RejectFriendRequestRequest{
+		RequestId:      reqID,
+		OperatorUserId: uint64(operatorUserID),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 成功后给双方推 updated 事件
+	fromID := item.GetFromUserId()
+	toID := item.GetToUserId()
+	s.pushFriendRequestEvent(
+		c,
+		uint(toID),
+		"friend_request_updated",
+		reqID,
+		fromID,
+		toID,
+		"rejected",
+		item.GetRemark(),
+	)
+	s.pushFriendRequestEvent(
+		c,
+		uint(fromID),
+		"friend_request_updated",
+		reqID,
+		fromID,
+		toID,
+		"rejected",
+		item.GetRemark(),
+	)
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{"message": resp.GetMessage()})
+}
+
+// handleBlockUser 拉黑用户。
+func (s *HTTPServer) handleBlockUser(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	userID := userIDVal.(uint)
+	// 非法请求
+	targetStr := c.Param("user_id")
+	targetID, err := strconv.ParseUint(targetStr, 10, 64)
+	if err != nil || targetID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+		return
+	}
+	// 拉黑用户
+	resp, err := s.friendClient.BlockUser(ctxWithTrace(c), &pbfriend.BlockUserRequest{
+		UserId:        uint64(userID),
+		BlockedUserId: targetID,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{"message": resp.GetMessage()})
+}
+
+// handleListIncomingFriendRequests 查询“我收到的”好友申请列表。
+func (s *HTTPServer) handleListIncomingFriendRequests(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	userID := userIDVal.(uint)
+	// 非法请求
+	var q gatewaymodel.ListFriendRequestsQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query"})
+		return
+	}
+	// 查询“我收到的”好友申请
+	resp, err := s.friendClient.ListIncomingFriendRequests(ctxWithTrace(c), &pbfriend.ListIncomingFriendRequestsRequest{
+		UserId: uint64(userID),
+		Status: q.Status,
+		Cursor: q.Cursor,
+		Limit:  q.Limit,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			if st.Code() == codes.InvalidArgument {
+				c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 转换为 gin.H 对象
+	items := make([]gin.H, 0, len(resp.GetItems()))
+	for _, it := range resp.GetItems() {
+		items = append(items, gin.H{
+			"request_id":   it.GetRequestId(),
+			"from_user_id": it.GetFromUserId(),
+			"to_user_id":   it.GetToUserId(),
+			"status":       it.GetStatus(),
+			"remark":       it.GetRemark(),
+			"created_at":   it.GetCreatedAt(),
+			"updated_at":   it.GetUpdatedAt(),
+		})
+	}
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"items":       items,
+		"next_cursor": resp.GetNextCursor(),
+		"has_more":    resp.GetHasMore(),
+	})
+}
+
+// handleListOutgoingFriendRequests 查询“我发出的”好友申请列表。
+func (s *HTTPServer) handleListOutgoingFriendRequests(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	userID := userIDVal.(uint)
+	// 非法请求
+	var q gatewaymodel.ListFriendRequestsQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query"})
+		return
+	}
+	// 查询“我发出的”好友申请
+	resp, err := s.friendClient.ListOutgoingFriendRequests(ctxWithTrace(c), &pbfriend.ListOutgoingFriendRequestsRequest{
+		UserId: uint64(userID),
+		Status: q.Status,
+		Cursor: q.Cursor,
+		Limit:  q.Limit,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			if st.Code() == codes.InvalidArgument {
+				c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	// 转换为 gin.H 对象
+	items := make([]gin.H, 0, len(resp.GetItems()))
+	for _, it := range resp.GetItems() {
+		items = append(items, gin.H{
+			"request_id":   it.GetRequestId(),
+			"from_user_id": it.GetFromUserId(),
+			"to_user_id":   it.GetToUserId(),
+			"status":       it.GetStatus(),
+			"remark":       it.GetRemark(),
+			"created_at":   it.GetCreatedAt(),
+			"updated_at":   it.GetUpdatedAt(),
+		})
+	}
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"items":       items,
+		"next_cursor": resp.GetNextCursor(),
+		"has_more":    resp.GetHasMore(),
+	})
+}
+
+// pushFriendRequestEvent 向指定用户推送好友申请事件。
+func (s *HTTPServer) pushFriendRequestEvent(c *gin.Context, toUserID uint, eventType string, requestID uint64, fromUserID uint64, targetUserID uint64, status string, remark string) {
+	payload, _ := json.Marshal(gin.H{
+		"type":         eventType, // friend_request_created / friend_request_updated
+		"request_id":   requestID,
+		"from_user_id": fromUserID,
+		"to_user_id":   targetUserID,
+		"status":       status,
+		"remark":       remark,
+		"ts":           time.Now().Unix(),
+	})
+	if err := conversationhandler.PushToUser(toUserID, 0, string(payload)); err != nil {
+		log.Printf("[trace=%v] push friend event failed to user=%d: %v", c.GetString("trace_id"), toUserID, err)
+	}
 }

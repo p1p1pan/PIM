@@ -34,35 +34,35 @@ func main() {
 		log.Fatalf("Failed to connect to redis: %v", err)
 	}
 	defer redisClient.Close()
-
+	// 连接 auth service
 	authConn, err := grpc.NewClient("localhost:9005", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to auth service: %v", err)
 	}
 	defer authConn.Close()
 	authClient := pbauth.NewAuthServiceClient(authConn)
-
+	// 连接 user service
 	userConn, err := grpc.NewClient("localhost:9011", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to user service: %v", err)
 	}
 	defer userConn.Close()
 	userClient := pbuser.NewUserServiceClient(userConn)
-
+	// 连接 friend service
 	friendConn, err := grpc.NewClient("localhost:9012", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to friend service: %v", err)
 	}
 	defer friendConn.Close()
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
-
+	// 连接 conversation service
 	conversationConn, err := grpc.NewClient("localhost:9013", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to conversation service: %v", err)
 	}
 	defer conversationConn.Close()
 	conversationClient := pbconversation.NewConversationServiceClient(conversationConn)
-
+	// 创建 http server 用于处理 HTTP 请求
 	httpServer := gatewayhandler.NewHTTPServer(
 		authClient,
 		userClient,
@@ -73,6 +73,7 @@ func main() {
 	)
 	httpServer.RegisterRoutes(r)
 
+	// 启动 push service 用于处理 WebSocket 连接
 	go func() {
 		lis, err := net.Listen("tcp", ":8090")
 		if err != nil {

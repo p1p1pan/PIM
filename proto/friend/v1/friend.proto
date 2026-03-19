@@ -5,17 +5,15 @@ package friend.v1;
 option go_package = "pim/internal/friend/pb;pbfriend";
 
 service FriendService {
-  rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
   rpc ListFriends(ListFriendsRequest) returns (ListFriendsResponse);
-}
-
-message AddFriendRequest {
-  uint64 user_id = 1;    // 当前用户（后续 gateway 从 JWT 填）
-  uint64 friend_id = 2;  // 要加的好友
-}
-
-message AddFriendResponse {
-  string message = 1;
+  rpc SendFriendRequest(SendFriendRequestRequest) returns (SendFriendRequestResponse);
+  rpc ApproveFriendRequest(ApproveFriendRequestRequest) returns (ApproveFriendRequestResponse);
+  rpc RejectFriendRequest(RejectFriendRequestRequest) returns (RejectFriendRequestResponse);
+  rpc BlockUser(BlockUserRequest) returns (BlockUserResponse);
+  rpc IsFriend(IsFriendRequest) returns (IsFriendResponse);
+  rpc ListIncomingFriendRequests(ListIncomingFriendRequestsRequest) returns (ListIncomingFriendRequestsResponse);
+  rpc ListOutgoingFriendRequests(ListOutgoingFriendRequestsRequest) returns (ListOutgoingFriendRequestsResponse);
+  rpc GetFriendRequestByID(GetFriendRequestByIDRequest) returns (GetFriendRequestByIDResponse);
 }
 
 message ListFriendsRequest {
@@ -31,4 +29,91 @@ message Friend {
   uint64 user_id = 2;
   uint64 friend_id = 3;
   int64 created_at = 4;
+}
+// 好友申请
+message SendFriendRequestRequest {
+  uint64 from_user_id = 1;
+  uint64 to_user_id = 2;
+  string remark = 3;
+}
+message SendFriendRequestResponse {
+  uint64 request_id = 1;
+  string status = 2;
+}
+
+// 同意申请
+message ApproveFriendRequestRequest {
+  uint64 request_id = 1;
+  uint64 operator_user_id = 2;
+}
+message ApproveFriendRequestResponse {
+  string message = 1;
+}
+
+// 拒绝申请
+message RejectFriendRequestRequest {
+  uint64 request_id = 1;
+  uint64 operator_user_id = 2;
+}
+message RejectFriendRequestResponse {
+  string message = 1;
+}
+
+// 拉黑
+message BlockUserRequest {
+  uint64 user_id = 1;
+  uint64 blocked_user_id = 2;
+}
+message BlockUserResponse {
+  string message = 1;
+}
+// 好友关系查询
+message IsFriendRequest {
+  uint64 user_id = 1;
+  uint64 target_user_id = 2;
+}
+message IsFriendResponse {
+  bool is_friend = 1;
+}
+// 好友申请的请求
+message FriendRequestItem {
+  uint64 request_id = 1;
+  uint64 from_user_id = 2;
+  uint64 to_user_id = 3;
+  string status = 4;
+  string remark = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+}
+// 收到的好友请求
+message ListIncomingFriendRequestsRequest {
+  uint64 user_id = 1; // 当前登录用户
+  string status = 2;  // 可选：pending/accepted/rejected/cancelled，空表示全部
+  uint64 cursor = 3;  // 可选：基于 request_id 的游标
+  uint32 limit = 4;   // 可选：默认20，最大50
+}
+message ListIncomingFriendRequestsResponse {
+  repeated FriendRequestItem items = 1;
+  uint64 next_cursor = 2;
+  bool has_more = 3;
+}
+// 发出的好友申请
+message ListOutgoingFriendRequestsRequest {
+  uint64 user_id = 1;
+  string status = 2;
+  uint64 cursor = 3;
+  uint32 limit = 4;
+}
+message ListOutgoingFriendRequestsResponse {
+  repeated FriendRequestItem items = 1;
+  uint64 next_cursor = 2;
+  bool has_more = 3;
+}
+// 好友请求的双方ID
+message GetFriendRequestByIDRequest {
+  uint64 request_id = 1;
+}
+
+message GetFriendRequestByIDResponse {
+  FriendRequestItem item = 1;
 }

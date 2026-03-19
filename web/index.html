@@ -106,11 +106,15 @@
 
       <div class="card">
         <div class="section-title">好友</div>
-        <label>添加好友（对方用户 ID）</label>
+        <label>发送好友申请（对方用户 ID）</label>
         <div class="row">
           <input id="addFriendId" type="number" placeholder="2" />
-          <button id="addFriendBtn" class="secondary">添加</button>
+          <button id="addFriendBtn" class="secondary">申请</button>
         </div>
+        <button id="loadFriendReqBtn" class="secondary" style="margin-top:6px; width:100%;">刷新申请中心</button>
+        <button id="clearFriendReqBtn" class="secondary" style="margin-top:6px; width:100%;">清空本地提醒</button>
+        <div class="friends-list" id="friendRequestList"></div>
+        <div class="friends-list" id="outgoingRequestList"></div>
         <button id="loadFriendsBtn" style="margin-top:6px; width:100%;">刷新好友列表</button>
         <div class="friends-list" id="friendsList"></div>
       </div>
@@ -167,6 +171,9 @@
   let currentUser = null;
   let friends = [];
   let conversations = [];
+  // 好友申请中心：incoming/outgoing 都来自后端接口（真相源）。
+  let incomingFriendRequests = [];
+  let outgoingFriendRequests = [];
   // 好友未读数映射：friend_id -> unread count
   let unreadMap = {};
   let currentPeerId = null;
@@ -231,6 +238,105 @@
       node2.textContent = label;
       node2.onclick = () => selectPeer(f.friend_id);
       right.appendChild(node2);
+    });
+  }
+
+  // 渲染“收到的好友申请”列表，支持直接同意/拒绝。
+  function renderIncomingFriendRequests() {
+    const box = el('friendRequestList');
+    if (!box) return;
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.style.fontSize = '12px';
+    title.style.color = '#9ca3af';
+    title.textContent = '收到的申请';
+    box.appendChild(title);
+
+    if (!incomingFriendRequests.length) {
+      const empty = document.createElement('div');
+      empty.style.fontSize = '12px';
+      empty.style.color = '#9ca3af';
+      empty.textContent = '暂无待处理申请';
+      box.appendChild(empty);
+      return;
+    }
+    incomingFriendRequests.forEach(req => {
+      const row = document.createElement('div');
+      row.className = 'friend-item';
+      row.style.flexDirection = 'column';
+      row.style.alignItems = 'stretch';
+      row.style.gap = '6px';
+
+      const text = document.createElement('div');
+      text.style.fontSize = '12px';
+      text.textContent = `申请ID:${req.request_id} 来自用户#${req.from_user_id}` + (req.remark ? `（${req.remark}）` : '');
+      row.appendChild(text);
+
+      const btnRow = document.createElement('div');
+      btnRow.className = 'row';
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'secondary';
+      approveBtn.textContent = '同意';
+      approveBtn.onclick = async () => {
+        try {
+          await apiRequest('/api/v1/friends/requests/' + encodeURIComponent(req.request_id) + '/approve', {
+            method: 'POST',
+          });
+          logDebug('同意好友申请成功: request_id=' + req.request_id);
+          await Promise.all([loadFriendRequestsCenter(), loadFriends()]);
+        } catch (e) {
+          logDebug('同意好友申请失败: ' + e.message);
+          alert('同意好友申请失败: ' + e.message);
+        }
+      };
+
+      const rejectBtn = document.createElement('button');
+      rejectBtn.className = 'secondary';
+      rejectBtn.textContent = '拒绝';
+      rejectBtn.onclick = async () => {
+        try {
+          await apiRequest('/api/v1/friends/requests/' + encodeURIComponent(req.request_id) + '/reject', {
+            method: 'POST',
+          });
+          logDebug('拒绝好友申请成功: request_id=' + req.request_id);
+          await loadFriendRequestsCenter();
+        } catch (e) {
+          logDebug('拒绝好友申请失败: ' + e.message);
+          alert('拒绝好友申请失败: ' + e.message);
+        }
+      };
+      btnRow.appendChild(approveBtn);
+      btnRow.appendChild(rejectBtn);
+      row.appendChild(btnRow);
+      box.appendChild(row);
+    });
+  }
+
+  // 渲染“我发出的申请”列表（只读状态）。
+  function renderOutgoingFriendRequests() {
+    const box = el('outgoingRequestList');
+    if (!box) return;
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.style.fontSize = '12px';
+    title.style.color = '#9ca3af';
+    title.textContent = '我发出的申请';
+    box.appendChild(title);
+
+    if (!outgoingFriendRequests.length) {
+      const empty = document.createElement('div');
+      empty.style.fontSize = '12px';
+      empty.style.color = '#9ca3af';
+      empty.textContent = '暂无记录';
+      box.appendChild(empty);
+      return;
+    }
+    outgoingFriendRequests.forEach(req => {
+      const row = document.createElement('div');
+      row.className = 'friend-item';
+      row.style.cursor = 'default';
+      row.textContent = `申请ID:${req.request_id} -> 用户#${req.to_user_id}（${req.status}）`;
+      box.appendChild(row);
     });
   }
 
@@ -332,8 +438,8 @@
       el('authInfo').textContent = '已获取 JWT token，后续请求自动携带';
       logDebug('登录成功: ' + JSON.stringify(res));
 
-      // 登录后拉一次好友和会话列表
-      await Promise.all([loadFriends(), loadConversations()]);
+      // 登录后拉一次好友、会话和申请中心
+      await Promise.all([loadFriends(), loadConversations(), loadFriendRequestsCenter()]);
     } catch (e) {
       logDebug('登录失败: ' + e.message);
       alert('登录失败: ' + e.message);
@@ -353,7 +459,7 @@
     }
   };
 
-  // 添加好友
+  // 发送好友申请
   el('addFriendBtn').onclick = async () => {
     const idStr = el('addFriendId').value.trim();
     if (!idStr) {
@@ -362,17 +468,56 @@
     }
     try {
       const fid = Number(idStr);
-      await apiRequest('/api/v1/friends', {
+      const res = await apiRequest('/api/v1/friends/requests', {
         method: 'POST',
-        body: { friend_id: fid },
+        body: { to_user_id: fid, remark: '' },
       });
-      logDebug('添加好友成功: ' + fid);
-      await loadFriends();
+      const reqID = res && res.request_id ? res.request_id : '未知';
+      logDebug(`好友申请已发送: to=${fid}, request_id=${reqID}`);
+      await loadFriendRequestsCenter();
+      alert(`好友申请已发送（申请ID: ${reqID}），等待对方同意`);
     } catch (e) {
-      logDebug('添加好友失败: ' + e.message);
-      alert('添加好友失败: ' + e.message);
+      logDebug('发送好友申请失败: ' + e.message);
+      alert('发送好友申请失败: ' + e.message);
     }
   };
+
+  // 清空本地申请提醒（不影响后端数据）。
+  el('clearFriendReqBtn').onclick = () => {
+    incomingFriendRequests = [];
+    outgoingFriendRequests = [];
+    renderIncomingFriendRequests();
+    renderOutgoingFriendRequests();
+  };
+
+  // 刷新申请中心。
+  el('loadFriendReqBtn').onclick = () => {
+    loadFriendRequestsCenter();
+  };
+
+  // 拉“收到的申请”列表（真相源）。
+  async function loadIncomingFriendRequests() {
+    const res = await apiRequest('/api/v1/friends/requests/incoming?status=pending&limit=20');
+    incomingFriendRequests = res.items || [];
+  }
+
+  // 拉“发出的申请”列表（真相源）。
+  async function loadOutgoingFriendRequests() {
+    const res = await apiRequest('/api/v1/friends/requests/outgoing?limit=20');
+    outgoingFriendRequests = res.items || [];
+  }
+
+  // 申请中心统一刷新入口。
+  async function loadFriendRequestsCenter() {
+    try {
+      await Promise.all([loadIncomingFriendRequests(), loadOutgoingFriendRequests()]);
+      renderIncomingFriendRequests();
+      renderOutgoingFriendRequests();
+      logDebug('申请中心已刷新');
+    } catch (e) {
+      logDebug('刷新申请中心失败: ' + e.message);
+    }
+  }
 
   // 拉好友列表
   async function loadFriends() {
@@ -471,6 +616,19 @@
         }
         const from = data.from;
         const content = data.content;
+        // 系统事件：好友申请实时通知（Gateway 推送）。
+        if (from === 0 && typeof content === 'string') {
+          try {
+            const sysEvt = JSON.parse(content);
+            if (sysEvt && (sysEvt.type === 'friend_request_created' || sysEvt.type === 'friend_request_updated')) {
+              logDebug(`收到好友申请事件: ${sysEvt.type}, request_id=${sysEvt.request_id || ''}, status=${sysEvt.status || ''}`);
+              loadFriendRequestsCenter();
+              return;
+            }
+          } catch (_) {
+            // 非系统事件则继续按普通聊天消息处理
+          }
+        }
         if (!currentPeerId || currentPeerId !== from) {
           // 若不是当前会话：记未读 + 提示
           unreadMap[from] = (unreadMap[from] || 0) + 1;
@@ -533,8 +691,11 @@
 
   // 初始的小提示
   logDebug('1. 先用 user-service 的账号在这里注册/登录');
-  logDebug('2. 登录后添加对方为好友，并刷新好友列表');
-  logDebug('3. 连接 WebSocket，选择好友或填对方 ID 聊天');
+  logDebug('2. 登录后先点“刷新申请中心”可查看收/发申请');
+  logDebug('3. B 保持 WebSocket 在线，可实时收到申请事件');
+  logDebug('4. 同意/拒绝后会自动刷新申请中心和好友列表');
+  renderIncomingFriendRequests();
+  renderOutgoingFriendRequests();
 </script>
 </body>
 </html>

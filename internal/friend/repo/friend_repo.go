@@ -7,6 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"pim/internal/friend/model"
 )
@@ -33,10 +34,10 @@ func (r *FriendRepo) CountRelation(userID, friendID uint) (int64, error) {
 // CreateBidirectional 建立双向好友关系（A->B, B->A）。
 func (r *FriendRepo) CreateBidirectional(userID, friendID uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&model.Friend{UserID: userID, FriendID: friendID}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.Friend{UserID: userID, FriendID: friendID}).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&model.Friend{UserID: friendID, FriendID: userID}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.Friend{UserID: friendID, FriendID: userID}).Error; err != nil {
 			return err
 		}
 		return nil
@@ -90,4 +91,127 @@ func (r *FriendRepo) SetCache(userID uint, friends []model.Friend) {
 	if data, err := json.Marshal(friends); err == nil {
 		_ = r.rdb.Set(ctx, key, data, 0).Err()
 	}
+}
+
+// IsBlocked 判断 userID 是否已拉黑 targetID。
+func (r *FriendRepo) IsBlocked(userID, targetID uint) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.Blacklist{}).
+		Where("user_id = ? AND blocked_user_id = ?", userID, targetID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// CreateFriendRequest 创建好友申请。
+func (r *FriendRepo) CreateFriendRequest(fromID, toID uint, remark string) (*model.FriendRequest, error) {
+	req := &model.FriendRequest{
+		FromUserID: fromID,
+		ToUserID:   toID,
+		Status:     "pending",
+		Remark:     remark,
+	}
+	if err := r.db.Create(req).Error; err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+// GetFriendRequestByID 按 ID 查询好友申请。
+func (r *FriendRepo) GetFriendRequestByID(id uint) (*model.FriendRequest, error) {
+	var req model.FriendRequest
+	if err := r.db.First(&req, id).Error; err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
+// UpdateFriendRequestStatus 更新申请状态。
+func (r *FriendRepo) UpdateFriendRequestStatus(id uint, status string) error {
+	return r.db.Model(&model.FriendRequest{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status": status,
+		}).Error
+}
+
+// BlockUser 创建拉黑关系。
+func (r *FriendRepo) BlockUser(userID, blockedUserID uint) error {
+	return r.db.Create(&model.Blacklist{
+		UserID:        userID,
+		BlockedUserID: blockedUserID,
+	}).Error
+}
+
+// ListIncomingFriendRequests 查询“我收到的”好友申请（按 ID 倒序分页）。
+func (r *FriendRepo) ListIncomingFriendRequests(userID uint, status string, cmp uint, limit int) ([]model.FriendRequest, uint, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	// 查询“我收到的”好友申请
+	q := r.db.Model(&model.FriendRequest{}).
+		Where("to_user_id = ?", userID)
+	// status 为空表示全部
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	// cmp 语义：拿比 cmp 小的旧数据（ID 倒序）
+	if cmp > 0 {
+		q = q.Where("id < ?", cmp)
+	}
+	// 查询数据
+	var rows []model.FriendRequest
+	if err := q.Order("id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		return nil, 0, false, err
+	}
+	// 是否有更多数据
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	// 下一个游标
+	var nextCmp uint
+	if len(rows) > 0 {
+		nextCmp = rows[len(rows)-1].ID
+	}
+	return rows, nextCmp, hasMore, nil
+}
+
+// ListOutgoingFriendRequests 查询“我发出的”好友申请（按 ID 倒序分页）。
+func (r *FriendRepo) ListOutgoingFriendRequests(userID uint, status string, cmp uint, limit int) ([]model.FriendRequest, uint, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	// 查询“我发出的”好友申请
+	q := r.db.Model(&model.FriendRequest{}).
+		Where("from_user_id = ?", userID)
+	// status 为空表示全部
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	// cmp 语义：拿比 cmp 小的旧数据（ID 倒序）
+	if cmp > 0 {
+		q = q.Where("id < ?", cmp)
+	}
+	// 查询数据
+	var rows []model.FriendRequest
+	if err := q.Order("id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		return nil, 0, false, err
+	}
+	// 是否有更多数据
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	// 下一个游标
+	var nextCmp uint
+	if len(rows) > 0 {
+		nextCmp = rows[len(rows)-1].ID
+	}
+	return rows, nextCmp, hasMore, nil
 }

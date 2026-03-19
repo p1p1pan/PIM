@@ -35,7 +35,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	if err := db.AutoMigrate(&friendmodel.Friend{}); err != nil {
+	if err := db.AutoMigrate(&friendmodel.Friend{}, &friendmodel.FriendRequest{}, &friendmodel.Blacklist{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
 	// redis client
