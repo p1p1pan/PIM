@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/Shopify/sarama"
@@ -42,8 +43,8 @@ func NewProducer(cfg *ProducerConfig) *Producer {
 // SendMessage 发送一条消息到指定 topic。
 func (p *Producer) SendMessage(ctx context.Context, topic, key string, value []byte) error {
 	if p == nil || p.producer == nil {
-		// 未初始化 producer 时，直接返回 nil，相当于静默降级
-		return nil
+		// 避免“接口成功但消息未写入 Kafka”的静默失败。
+		return errors.New("kafka producer not initialized")
 	}
 	msg := &sarama.ProducerMessage{
 		Topic: topic,

@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package file.v1;
+
+option go_package = "pim/internal/file/pb;pbfile";
+
+service FileService {
+  rpc PrepareUpload(PrepareUploadRequest) returns (PrepareUploadResponse);
+  rpc CommitUpload(CommitUploadRequest) returns (CommitUploadResponse);
+  rpc GetFile(GetFileRequest) returns (GetFileResponse);
+  rpc ApplyScanResult(ApplyScanResultRequest) returns (ApplyScanResultResponse);
+}
+
+message FileItem {
+  uint64 id = 1;
+  uint64 owner_user_id = 2;
+  string biz_type = 3; // private/group
+  uint64 peer_id = 4;
+  uint64 group_id = 5;
+  string object_key = 6;
+  string file_name = 7;
+  int64 file_size = 8;
+  string mime_type = 9;
+  string status = 10; // pending_upload/uploaded/scanning/ok/rejected
+  string reject_reason = 11;
+  string upload_url = 12;
+  string download_url = 13;
+  int64 created_at = 14;
+  int64 updated_at = 15;
+}
+
+message PrepareUploadRequest {
+  uint64 owner_user_id = 1;
+  string client_upload_id = 2;
+  string file_name = 3;
+  int64 file_size = 4;
+  string mime_type = 5;
+  string biz_type = 6; // private/group
+  uint64 peer_id = 7;
+  uint64 group_id = 8;
+}
+
+message PrepareUploadResponse {
+  FileItem file = 1;
+}
+
+message CommitUploadRequest {
+  uint64 file_id = 1;
+  uint64 owner_user_id = 2;
+  string etag = 3;
+}
+
+message CommitUploadResponse {
+  FileItem file = 1;
+}
+
+message GetFileRequest {
+  uint64 file_id = 1;
+  uint64 operator_user_id = 2;
+}
+
+message GetFileResponse {
+  FileItem file = 1;
+}
+
+message ApplyScanResultRequest {
+  uint64 file_id = 1;
+  string result = 2; // ok/rejected
+  string reason = 3;
+}
+
+message ApplyScanResultResponse {
+  FileItem file = 1;
+}

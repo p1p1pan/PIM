@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 - PIM IM</title>
+  <link rel="stylesheet" href="./auth/style.css" />
+</head>
+<body>
+  <div class="auth-card">
+    <h1 class="title">欢迎回来</h1>
+    <p class="sub">登录后进入 IM 主界面</p>
+    <form id="login-form">
+      <div class="field">
+        <label class="label" for="username">用户名</label>
+        <input id="username" name="username" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label class="label" for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button class="btn" id="submit-btn" type="submit">登录</button>
+      <div id="status" class="status"></div>
+    </form>
+    <a href="./register.html" class="link">没有账号？去注册</a>
+  </div>
+  <script src="./common/boot.js"></script>
+  <script src="./auth/login.entry.js"></script>
+</body>
+</html>

@@ -57,6 +57,74 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
+  minio:
+    image: minio/minio:latest
+    container_name: pim-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: pimminio
+      MINIO_ROOT_PASSWORD: pimminiopass
+    command: server /data --console-address ":9001"
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - pim_miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: pim-minio-init
+    depends_on:
+      - minio
+    restart: "no"
+    entrypoint: /bin/sh -c
+    command: >
+      "
+      until mc alias set local http://minio:9000 pimminio pimminiopass; do sleep 1; done &&
+      mc mb --ignore-existing local/pim-files &&
+      cat > /tmp/cors.json <<'EOF'
+      {
+        \"CORSRules\": [
+          {
+            \"AllowedOrigins\": [\"http://localhost:8080\"],
+            \"AllowedMethods\": [\"GET\", \"PUT\", \"HEAD\"],
+            \"AllowedHeaders\": [\"*\"],
+            \"ExposeHeaders\": [\"ETag\", \"Content-Length\", \"Content-Type\"],
+            \"MaxAgeSeconds\": 3600
+          }
+        ]
+      }
+      EOF
+      &&
+      mc cors set local/pim-files /tmp/cors.json
+      "
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.2
+    container_name: pim-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - pim_esdata:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.2
+    container_name: pim-kibana
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+
 volumes:
   pim_pgdata:
   pim_redisdata:
+  pim_miniodata:
+  pim_esdata:

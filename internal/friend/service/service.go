@@ -182,7 +182,13 @@ func (s *Service) BlockUser(userID, blockedUserID uint) error {
 	if userID == blockedUserID {
 		return ErrCannotAddSelf
 	}
-	return s.repo.BlockUser(userID, blockedUserID)
+	// 阶段4前端语义调整：该动作改为“删除好友”，不再创建黑名单关系。
+	if err := s.repo.DeleteBidirectional(userID, blockedUserID); err != nil {
+		return err
+	}
+	s.repo.DelCache(userID)
+	s.repo.DelCache(blockedUserID)
+	return nil
 }
 
 // IsFriend 判断是否为好友。

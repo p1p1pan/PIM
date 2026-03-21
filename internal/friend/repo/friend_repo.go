@@ -44,6 +44,19 @@ func (r *FriendRepo) CreateBidirectional(userID, friendID uint) error {
 	})
 }
 
+// DeleteBidirectional 删除双向好友关系（A->B, B->A）。
+func (r *FriendRepo) DeleteBidirectional(userID, friendID uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ? AND friend_id = ?", userID, friendID).Delete(&model.Friend{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ? AND friend_id = ?", friendID, userID).Delete(&model.Friend{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // ListByUserID 查询某用户全部好友关系。
 func (r *FriendRepo) ListByUserID(userID uint) ([]model.Friend, error) {
 	var friends []model.Friend

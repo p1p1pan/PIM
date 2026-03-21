@@ -172,7 +172,7 @@ func (s *GRPCFriendServer) RejectFriendRequest(ctx context.Context, req *pbfrien
 	return &pbfriend.RejectFriendRequestResponse{Message: "rejected"}, nil
 }
 
-// BlockUser 处理拉黑请求。
+// BlockUser 处理“删除好友”请求（沿用原RPC名称以保持兼容）。
 func (s *GRPCFriendServer) BlockUser(ctx context.Context, req *pbfriend.BlockUserRequest) (*pbfriend.BlockUserResponse, error) {
 	traceID := traceIDFromCtx(ctx)
 	// 非法请求
@@ -180,17 +180,17 @@ func (s *GRPCFriendServer) BlockUser(ctx context.Context, req *pbfriend.BlockUse
 		log.Printf("[trace=%s] friend.BlockUser: invalid request", traceID)
 		return nil, status.Errorf(codes.InvalidArgument, "invalid request")
 	}
-	// 拉黑用户
+	// 删除好友关系
 	if err := s.svc.BlockUser(uint(req.UserId), uint(req.BlockedUserId)); err != nil {
 		log.Printf("[trace=%s] friend.BlockUser: failed: %v", traceID, err)
 		switch {
 		case errors.Is(err, friendservice.ErrInvalidUserID), errors.Is(err, friendservice.ErrCannotAddSelf):
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, "block user failed: %v", err)
+		return nil, status.Errorf(codes.Internal, "remove friend failed: %v", err)
 	}
 
-	return &pbfriend.BlockUserResponse{Message: "blocked"}, nil
+	return &pbfriend.BlockUserResponse{Message: "friend removed"}, nil
 }
 
 // IsFriend 处理好友关系查询请求。

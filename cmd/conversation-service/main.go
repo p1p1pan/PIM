@@ -22,6 +22,7 @@ import (
 	conversationrepo "pim/internal/conversation/repo"
 	conversationservice "pim/internal/conversation/service"
 	pbgateway "pim/internal/gateway/pb"
+	"pim/internal/mq/kafka"
 )
 
 func main() {
@@ -68,8 +69,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	conversationSvc := conversationservice.NewService(conversationrepo.NewRepo(db))
+	producer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: config.KafkaBrokerList})
+	defer producer.Close()
 
-	conversationmq.StartConsumers(ctx, conversationSvc, rdb, pushClient, []string{config.KafkaBrokers})
+	conversationmq.StartConsumers(ctx, conversationSvc, rdb, pushClient, producer, config.KafkaBrokerList)
 	// grpc server
 	grpcServer := grpc.NewServer()
 	pbconversation.RegisterConversationServiceServer(grpcServer, conversationhandler.NewGRPCConversationServer(conversationSvc))

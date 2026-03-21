@@ -12,9 +12,11 @@ import (
 
 	pbauth "pim/internal/auth/pb"
 	pbconversation "pim/internal/conversation/pb"
+	pbfile "pim/internal/file/pb"
 	pbfriend "pim/internal/friend/pb"
 	gatewayhandler "pim/internal/gateway/handler"
 	pbgateway "pim/internal/gateway/pb"
+	pbgroup "pim/internal/group/pb"
 	pbuser "pim/internal/user/pb"
 
 	"pim/internal/config"
@@ -62,15 +64,39 @@ func main() {
 	}
 	defer conversationConn.Close()
 	conversationClient := pbconversation.NewConversationServiceClient(conversationConn)
-	// 创建 http server 用于处理 HTTP 请求
+	// 连接 group service
+	groupConn, err := grpc.NewClient("localhost:9014", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to group service: %v", err)
+	}
+	defer groupConn.Close()
+	groupClient := pbgroup.NewGroupServiceClient(groupConn)
+	// 连接 file service
+	fileConn, err := grpc.NewClient("localhost:9015", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to file service: %v", err)
+	}
+	defer fileConn.Close()
+	fileClient := pbfile.NewFileServiceClient(fileConn)
+	// 创建 HTTP Server 并注入所有下游 gRPC client。
 	httpServer := gatewayhandler.NewHTTPServer(
 		authClient,
 		userClient,
 		friendClient,
 		conversationClient,
+		groupClient,
+		fileClient,
 		redisClient,
-		[]string{config.KafkaBrokers},
+		config.KafkaBrokerList,
+		config.LogServiceHTTPURL,
+		config.FileServiceHTTPURL,
 	)
+	r.Use(httpServer.AccessLogMiddleware())
+	defer func() {
+		if err := httpServer.Close(); err != nil {
+			log.Printf("Failed to close gateway HTTPServer resources: %v", err)
+		}
+	}()
 	httpServer.RegisterRoutes(r)
 
 	// 启动 push service 用于处理 WebSocket 连接

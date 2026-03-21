@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package group.v1;
+
+option go_package = "pim/internal/group/pb;pbgroup";
+
+service GroupService {
+  rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse);
+  rpc AddMember(AddMemberRequest) returns (AddMemberResponse);
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+  rpc IsMember(IsMemberRequest) returns (IsMemberResponse);
+  rpc ListUserGroups(ListUserGroupsRequest) returns (ListUserGroupsResponse);
+  rpc ListGroupMessages(ListGroupMessagesRequest) returns (ListGroupMessagesResponse);
+  rpc GetGroup(GetGroupRequest) returns (GetGroupResponse);
+  rpc UpdateGroup(UpdateGroupRequest) returns (UpdateGroupResponse);
+  rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
+  rpc DisbandGroup(DisbandGroupRequest) returns (DisbandGroupResponse);
+  rpc TransferOwner(TransferOwnerRequest) returns (TransferOwnerResponse);
+  rpc AppendSystemMessage(AppendSystemMessageRequest) returns (AppendSystemMessageResponse);
+  rpc MarkGroupRead(MarkGroupReadRequest) returns (MarkGroupReadResponse);
+  rpc ListUserGroupConversations(ListUserGroupConversationsRequest) returns (ListUserGroupConversationsResponse);
+}
+// group 类型结构
+message Group {
+  uint64 id = 1;
+  string name = 2;
+  uint64 owner_user_id = 3;
+  string notice = 4;
+  int64 created_at = 5;
+  int64 updated_at = 6;
+}
+// group 成员结构
+message GroupMember {
+  uint64 id = 1;
+  uint64 group_id = 2;
+  uint64 user_id = 3;
+  string role = 4;
+  int64 joined_at = 5;
+}
+// 创建group请求
+message CreateGroupRequest {
+  uint64 owner_user_id = 1;
+  string name = 2;
+  repeated uint64 member_user_ids = 3;
+}
+// 创建group响应
+message CreateGroupResponse {
+  Group group = 1;
+}
+// 添加成员请求
+message AddMemberRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+  uint64 target_user_id = 3;
+}
+// 添加成员响应
+message AddMemberResponse {
+  string message = 1;
+}
+// 删除成员请求
+message RemoveMemberRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+  uint64 target_user_id = 3;
+}
+// 删除成员响应
+message RemoveMemberResponse {
+  string message = 1;
+}
+// 列出成员请求
+message ListMembersRequest {
+  uint64 group_id = 1;
+}
+// 列出成员响应
+message ListMembersResponse {
+  repeated GroupMember members = 1;
+}
+// 是否为成员请求
+message IsMemberRequest {
+  uint64 group_id = 1;
+  uint64 user_id = 2;
+}
+// 是否为成员响应
+message IsMemberResponse {
+  bool is_member = 1;
+}
+
+// 列出某个用户加入的群请求
+message ListUserGroupsRequest {
+  uint64 user_id = 1;
+}
+
+// 列出某个用户加入的群响应
+message ListUserGroupsResponse {
+  repeated Group groups = 1;
+}
+
+message GroupMessageItem {
+  uint64 id = 1;
+  uint64 group_id = 2;
+  uint64 from_user_id = 3;
+  string message_type = 4; // text/system
+  string content = 5;
+  uint64 seq = 6;
+  int64 created_at = 7;
+}
+
+message ListGroupMessagesRequest {
+  uint64 group_id = 1;
+  uint64 user_id = 2;
+  int32 limit = 3;
+  uint64 before_seq = 4; // 仅返回 seq < before_seq 的历史消息
+}
+
+message ListGroupMessagesResponse {
+  repeated GroupMessageItem messages = 1;
+  bool has_more = 2;
+  uint64 next_before_seq = 3; // 下一次分页可传该值
+}
+
+message GetGroupRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+}
+
+message GetGroupResponse {
+  Group group = 1;
+}
+
+message UpdateGroupRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+  string name = 3;
+  string notice = 4;
+}
+
+message UpdateGroupResponse {
+  Group group = 1;
+}
+
+message LeaveGroupRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+}
+
+message LeaveGroupResponse {
+  string message = 1;
+}
+
+message DisbandGroupRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+}
+
+message DisbandGroupResponse {
+  string message = 1;
+}
+
+message TransferOwnerRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+  uint64 target_user_id = 3;
+}
+
+message TransferOwnerResponse {
+  Group group = 1;
+}
+
+message AppendSystemMessageRequest {
+  uint64 group_id = 1;
+  uint64 operator_user_id = 2;
+  string event_type = 3;
+  string content = 4;
+  string event_id = 5;
+}
+
+message AppendSystemMessageResponse {
+  uint64 seq = 1;
+}
+
+message MarkGroupReadRequest {
+  uint64 group_id = 1;
+  uint64 user_id = 2;
+  uint64 read_seq = 3;
+}
+
+message MarkGroupReadResponse {
+  uint64 read_seq = 1;
+}
+
+message GroupConversationItem {
+  Group group = 1;
+  uint64 last_seq = 2;
+  uint64 read_seq = 3;
+  uint64 unread_count = 4;
+}
+
+message ListUserGroupConversationsRequest {
+  uint64 user_id = 1;
+}
+
+message ListUserGroupConversationsResponse {
+  repeated GroupConversationItem items = 1;
+}
