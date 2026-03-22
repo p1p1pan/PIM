@@ -3,22 +3,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PIM IM</title>
+  <title>PIM 前端入口</title>
+  <link rel="stylesheet" href="./portal.css" />
 </head>
 <body>
+  <main class="portal">
+    <h1>PIM</h1>
+    <p class="sub">统一入口：用户从登录进入，监督从后台进入。</p>
+
+    <section class="hero">
+      <a class="cta primary" href="./login.html">进入登录</a>
+      <a class="cta" href="./admin.html">进入后台</a>
+    </section>
+    <p class="helper">没有账号？可从登录页进入注册。</p>
+
+    <section class="tips">
+      <h2>使用流程</h2>
+      <ol>
+        <li>用户：index -> 登录 -> IM。</li>
+        <li>新用户：登录页 -> 注册 -> 登录 -> IM。</li>
+        <li>监督：index -> 后台。</li>
+      </ol>
+    </section>
+  </main>
   <script>
-    (function redirect() {
+    (function attachQuickEnter() {
+      const key = "pim_auth_session";
+      let hasToken = false;
       try {
-        const raw = localStorage.getItem("pim_auth");
+        const raw = sessionStorage.getItem(key);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed && parsed.token) {
-            location.replace("./im.html");
-            return;
-          }
+          hasToken = !!(parsed && parsed.token);
         }
       } catch (_) {}
-      location.replace("./login.html");
+      if (!hasToken) return;
+      const area = document.querySelector(".hero");
+      if (!area) return;
+      const a = document.createElement("a");
+      a.className = "cta success";
+      a.href = "./im.html";
+      a.textContent = "继续进入 IM";
+      area.appendChild(a);
     })();
   </script>
 </body>

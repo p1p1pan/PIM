@@ -27,6 +27,7 @@ func newGoRunService(name, path string) *service {
 }
 
 func main() {
+	// 1) 统一拉起核心服务，便于本地联调（等价于多开终端 go run）。
 	services := []*service{
 		newGoRunService("auth-service", "./cmd/auth-service"),
 		newGoRunService("user-service", "./cmd/user-service"),
@@ -35,7 +36,7 @@ func main() {
 		newGoRunService("gateway", "./cmd/gateway"),
 	}
 
-	// 启动所有子服务
+	// 2) 启动所有子服务；任何一个启动失败直接退出，避免半可用状态。
 	for _, s := range services {
 		log.Printf("starting %s ...", s.Name)
 		if err := s.Cmd.Start(); err != nil {
@@ -45,7 +46,7 @@ func main() {
 
 	log.Println("all services started")
 
-	// 监听 Ctrl+C，退出时尽量杀掉子进程
+	// 3) 监听 Ctrl+C，退出时尽量回收子进程，防止端口残留占用。
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
@@ -56,8 +57,10 @@ func main() {
 			continue
 		}
 		if runtime.GOOS == "windows" {
+			// Windows 下优先使用 Kill，避免信号语义差异导致子进程残留。
 			_ = s.Cmd.Process.Kill()
 		} else {
+			// Linux/macOS 使用 SIGTERM，给子进程留清理机会。
 			_ = s.Cmd.Process.Signal(syscall.SIGTERM)
 		}
 	}

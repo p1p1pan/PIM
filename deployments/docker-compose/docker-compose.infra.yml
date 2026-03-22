@@ -123,8 +123,45 @@ services:
     ports:
       - "5601:5601"
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: pim-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/pim-alert-rules.yml:/etc/prometheus/rules/pim-alert-rules.yml:ro
+      - pim_prometheusdata:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: pim-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ../observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards/pim:ro
+      - pim_grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
 volumes:
   pim_pgdata:
   pim_redisdata:
   pim_miniodata:
   pim_esdata:
+  pim_prometheusdata:
+  pim_grafanadata:

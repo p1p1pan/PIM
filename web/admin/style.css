@@ -135,6 +135,29 @@ button.primary { background: #2d65f7; border: none; color: #fff; }
   background: #101725;
   padding: 10px;
 }
+.table-wrap {
+  margin-top: 14px;
+}
+.table-wrap h4 {
+  margin: 0 0 8px;
+  color: #dbe6ff;
+}
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.simple-table th,
+.simple-table td {
+  border: 1px solid #2d3951;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.simple-table th {
+  background: #101725;
+  color: #9fb0d3;
+}
 .row { display: flex; justify-content: space-between; align-items: center; }
 .name { font-weight: 600; }
 .badge { border-radius: 999px; padding: 2px 8px; font-size: 12px; }

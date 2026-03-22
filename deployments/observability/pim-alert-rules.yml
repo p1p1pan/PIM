@@ -1,0 +1,84 @@
+groups:
+  - name: pim-stage5-alerts
+    rules:
+      - alert: PimServiceDown
+        expr: up{job=~"pim-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PIM service down"
+          description: "Service {{ $labels.job }} has been down for over 1 minute."
+
+      - alert: PimHighHttpErrorRate
+        expr: |
+          (
+            sum by (service) (rate(pim_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum by (service) (rate(pim_http_requests_total[5m])), 0.0001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "Service {{ $labels.service }} has HTTP 5xx error rate above 5% in last 5m."
+
+      - alert: PimHighHttpLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, service) (rate(pim_http_request_duration_seconds_bucket[5m]))
+          ) * 1000 > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP latency p95"
+          description: "Service {{ $labels.service }} HTTP p95 latency is above 300ms in last 10m."
+
+      - alert: PimKafkaConsumerErrors
+        expr: increase(pim_kafka_messages_total{direction="consume",result=~"handler_error|consumer_error"}[10m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer errors detected"
+          description: "Topic {{ $labels.topic }} has consumer errors in the last 10m."
+
+      - alert: PimFileScanDlqGrowing
+        expr: increase(pim_kafka_messages_total{topic="file-scan-dlq",direction="produce",result="ok"}[15m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "File scan DLQ has new entries"
+          description: "file-scan-dlq has grown in the last 15m. Check replay queue."
+
+      # Drill-specific alerts: shorter windows for stage5 validation scripts.
+      - alert: PimDrillHttpErrorRate
+        expr: |
+          (
+            sum(rate(pim_http_requests_total{route="/api/v1/admin/observability/drill/http-500",status=~"5.."}[1m]))
+            /
+            clamp_min(sum(rate(pim_http_requests_total{route="/api/v1/admin/observability/drill/http-500"}[1m])), 0.0001)
+          ) > 0.5
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drill HTTP 5xx alert fired"
+          description: "Synthetic drill endpoint shows high 5xx ratio."
+
+      - alert: PimDrillHttpLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(pim_http_request_duration_seconds_bucket{route="/api/v1/admin/observability/drill/latency"}[1m]))
+          ) * 1000 > 700
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Drill HTTP latency p95 alert fired"
+          description: "Synthetic latency drill endpoint p95 exceeds 700ms."

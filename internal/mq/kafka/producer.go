@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/Shopify/sarama"
+	observemetrics "pim/internal/observability/metrics"
 )
 
 // ProducerConfig 用于配置 Kafka Producer。
@@ -27,6 +28,7 @@ func NewProducer(cfg *ProducerConfig) *Producer {
 	}
 
 	saramaCfg := sarama.NewConfig()
+	// 全量确认 + 有限重试：优先保证消息可靠写入。
 	saramaCfg.Producer.RequiredAcks = sarama.WaitForAll
 	saramaCfg.Producer.Retry.Max = 3
 	saramaCfg.Producer.Return.Successes = true
@@ -42,6 +44,7 @@ func NewProducer(cfg *ProducerConfig) *Producer {
 
 // SendMessage 发送一条消息到指定 topic。
 func (p *Producer) SendMessage(ctx context.Context, topic, key string, value []byte) error {
+	_ = ctx // 预留上下文扩展位（超时/trace），当前 sarama sync producer 未直接使用。
 	if p == nil || p.producer == nil {
 		// 避免“接口成功但消息未写入 Kafka”的静默失败。
 		return errors.New("kafka producer not initialized")
@@ -51,13 +54,16 @@ func (p *Producer) SendMessage(ctx context.Context, topic, key string, value []b
 		Value: sarama.ByteEncoder(value),
 	}
 	if key != "" {
+		// 指定 key 时由 Kafka 分区器保证同 key 有序。
 		msg.Key = sarama.StringEncoder(key)
 	}
 
 	partition, offset, err := p.producer.SendMessage(msg)
 	if err != nil {
+		observemetrics.ObserveKafkaProduce(topic, "error")
 		return err
 	}
+	observemetrics.ObserveKafkaProduce(topic, "ok")
 	log.Printf("kafka: sent message to %s [partition=%d, offset=%d]", topic, partition, offset)
 	return nil
 }

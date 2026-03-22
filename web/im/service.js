@@ -114,9 +114,6 @@ window.buildIMMethods = function buildIMMethods() {
       }
       location.replace("./login.html");
     },
-    openLogPage() {
-      window.open("./admin.html", "_blank");
-    },
     connectWs() {
       if (this.ws?.readyState === WebSocket.OPEN) return;
       this.ws = new WebSocket(`ws://localhost:8080/ws?token=${encodeURIComponent(this.token)}`);

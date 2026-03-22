@@ -14,11 +14,12 @@ import (
 	authhandler "pim/internal/auth/handler"
 	pbauth "pim/internal/auth/pb"
 	"pim/internal/config"
+	observemetrics "pim/internal/observability/metrics"
 	pbuser "pim/internal/user/pb"
 )
 
 func main() {
-	// redis client
+	// 1) 初始化基础依赖（Redis）。
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
@@ -29,8 +30,7 @@ func main() {
 	}
 	defer rdb.Close()
 
-	// gRPC：仅做 token 校验，不连 DB
-	// user service
+	// 2) 连接 user-service，供鉴权时查询用户信息。
 	userConn, err := grpc.NewClient("localhost:9011", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to user service: %v", err)
@@ -38,7 +38,7 @@ func main() {
 	defer userConn.Close()
 	userClient := pbuser.NewUserServiceClient(userConn)
 
-	// auth service
+	// 3) 启动 gRPC 服务（Auth 主能力）。
 	grpcServer := grpc.NewServer()
 	pbauth.RegisterAuthServiceServer(grpcServer, authhandler.NewGRPCAuthServer(userClient))
 	listener, err := net.Listen("tcp", ":9005")
@@ -46,12 +46,17 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 	go func() {
+		// gRPC 失败应立即终止进程，避免健康检查误判服务可用。
 		if err := grpcServer.Serve(listener); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
-	r := gin.Default()
+	// 4) 暴露最小 HTTP（健康检查）。
+	r := gin.New()
+	observemetrics.UseGinDefaultMiddleware(r)
+	r.Use(observemetrics.HTTPServerMetricsMiddleware("auth-service"))
+	observemetrics.RegisterMetricsRoute(r)
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

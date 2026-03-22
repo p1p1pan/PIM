@@ -14,9 +14,9 @@ var (
 	// ErrInvalidUserID 表示用户 ID 非法。
 	ErrInvalidUserID = errors.New("invalid user id")
 	// ErrEmptyContent 表示消息内容为空。
-	ErrEmptyContent  = errors.New("content is empty")
+	ErrEmptyContent = errors.New("content is empty")
 	// ErrNotFriends 表示双方不是好友。
-	ErrNotFriends    = errors.New("not friends, cannot send message")
+	ErrNotFriends = errors.New("not friends, cannot send message")
 )
 
 // Service 封装会话领域业务编排。
@@ -53,6 +53,7 @@ func (s *Service) SendMessageIdempotent(fromID, toID uint, content string, clien
 		}
 		return nil, false, err
 	}
+	// created=false 代表命中幂等（同 client_msg_id），调用方可避免重复后续处理。
 	return m, created, nil
 }
 
@@ -70,17 +71,20 @@ func (s *Service) HandleReadEvent(userID uint, conversationID string) (uint, err
 	var a, b uint
 	_, err := fmt.Sscanf(conversationID, "%d:%d", &a, &b)
 	if err != nil {
+		// 非法 conversationID 按幂等空操作处理，避免消费端反复报错重试。
 		return 0, nil
 	}
 	parts[0], parts[1] = a, b
 	conv, err := s.repo.GetConversationByUsers(parts[0], parts[1])
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 会话不存在时视作已处理（例如旧事件或竞态场景）。
 			return 0, nil
 		}
 		return 0, err
 	}
 	lastReadSeq := conv.LastSeq
+	// 已读游标直接推进到当前会话最新 seq。
 	if err := s.repo.UpsertReadCursor(conv.ID, userID, lastReadSeq); err != nil {
 		return 0, err
 	}

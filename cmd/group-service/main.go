@@ -23,11 +23,15 @@ import (
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
 	"pim/internal/mq/kafka"
+	observemetrics "pim/internal/observability/metrics"
 )
 
 func main() {
-	r := gin.Default()
-	// database
+	r := gin.New()
+	observemetrics.UseGinDefaultMiddleware(r)
+	r.Use(observemetrics.HTTPServerMetricsMiddleware("group-service"))
+	observemetrics.RegisterMetricsRoute(r)
+	// 1) 初始化 PostgreSQL 并迁移群相关表。
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		config.DBHost,
@@ -44,7 +48,7 @@ func main() {
 		log.Fatalf("Failed to migrate group tables: %v", err)
 	}
 
-	// redis client
+	// 2) 初始化 Redis（在线判定等辅助能力）。
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
@@ -53,7 +57,7 @@ func main() {
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		log.Fatalf("Failed to connect to redis: %v", err)
 	}
-	// gateway pushservice	内部下行事件 推送到指定用户的WebSocket连接
+	// 3) 连接 Gateway PushService，负责群消息在线下行。
 	pushConn, err := grpc.NewClient("localhost:8090", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to gateway PushService: %v", err)
@@ -61,20 +65,20 @@ func main() {
 	defer pushConn.Close()
 	pushClient := pbgateway.NewPushServiceClient(pushConn)
 
-	// grpc server
+	// 4) 启动 gRPC 服务（Group 主能力）。
 	groupRepo := grouprepo.NewGroupRepo(db)
 	groupSvc := groupservice.NewService(groupRepo)
 	grpcServer := grpc.NewServer()
 	pbgroup.RegisterGroupServiceServer(grpcServer, grouphandler.NewGRPCGroupServer(groupSvc))
 
-	// Kafka Consumer
+	// 5) 启动 Kafka 消费链路（group-message 落库与扇出）。
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	producer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: config.KafkaBrokerList})
 	defer producer.Close()
 	groupmq.StartConsumers(ctx, groupSvc, rdb, pushClient, producer, config.KafkaBrokerList)
 
-	// listen group grpc
+	// 6) 监听 gRPC 端口。
 	lis, err := net.Listen("tcp", ":9014")
 	if err != nil {
 		log.Fatalf("failed to listen group grpc: %v", err)
@@ -85,7 +89,7 @@ func main() {
 		}
 	}()
 
-	// http server
+	// 7) 暴露最小 HTTP（健康检查）。
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

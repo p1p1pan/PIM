@@ -17,6 +17,7 @@ func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
+			// 兼容 ws 握手等场景：允许通过 query token 传入。
 			if tokenFromQuery := c.Query("token"); tokenFromQuery != "" {
 				authHeader = "Bearer " + tokenFromQuery
 			}
@@ -32,6 +33,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 		c.Set("userID", userID)
+		// 后续 handler 统一从 context 读取 userID，不再重复解析 token。
 		c.Next()
 	}
 }
@@ -41,6 +43,7 @@ func GRPCMiddleware(client pbauth.AuthServiceClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
+			// 与本地中间件保持一致，支持 query token。
 			if tokenFromQuery := c.Query("token"); tokenFromQuery != "" {
 				authHeader = "Bearer " + tokenFromQuery
 			}

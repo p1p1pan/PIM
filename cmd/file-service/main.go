@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
-	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,11 +24,15 @@ import (
 	pbfriend "pim/internal/friend/pb"
 	pbgroup "pim/internal/group/pb"
 	"pim/internal/mq/kafka"
+	observemetrics "pim/internal/observability/metrics"
 )
 
 func main() {
-	r := gin.Default()
-	// 连接 PostgreSQL，并在启动时完成 File 相关表迁移。
+	r := gin.New()
+	observemetrics.UseGinDefaultMiddleware(r)
+	r.Use(observemetrics.HTTPServerMetricsMiddleware("file-service"))
+	observemetrics.RegisterMetricsRoute(r)
+	// 1) 连接 PostgreSQL，并在启动时完成 File 相关表迁移。
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		config.DBHost, config.DBPort, config.DBUser, config.DBPassword, config.DBName,
@@ -43,6 +44,7 @@ func main() {
 	if err := db.AutoMigrate(&filemodel.File{}, &filemodel.FileScanTask{}); err != nil {
 		log.Fatalf("Failed to migrate file tables: %v", err)
 	}
+	// 2) 初始化对象存储（MinIO）。
 	objectStore, err := filestorage.NewStore(
 		context.Background(),
 		config.MinIOEndpoint,
@@ -55,6 +57,7 @@ func main() {
 		log.Fatalf("Failed to init minio store: %v", err)
 	}
 
+	// 3) 组装 service 依赖（repo + group/friend 权限检查）。
 	fileRepo := filerepo.NewFileRepo(db)
 	groupConn, err := grpc.NewClient("localhost:9014", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -71,18 +74,20 @@ func main() {
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
 	friendChecker := fileservice.NewFriendGRPCChecker(friendClient)
 	fileSvc := fileservice.NewService(fileRepo, objectStore, groupChecker, friendChecker)
-	// producer 用于 commit 后投递 file-scan 事件。
+	// 4) 初始化 Kafka producer（commit 后投递 file-scan）。
 	producer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: config.KafkaBrokerList})
 	defer producer.Close()
 
+	// 5) 启动 gRPC 与 HTTP。
 	grpcServer := grpc.NewServer()
 	pbfile.RegisterFileServiceServer(grpcServer, filehandler.NewGRPCFileServer(fileSvc, producer, objectStore))
+	httpServer := filehandler.NewHTTPServer(fileSvc, producer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// 启动 file-scan 消费者（阶段4使用模拟扫描结果）。
+	// 6) 启动 file-scan 消费者链路。
 	filemq.StartConsumers(ctx, fileSvc, producer, config.KafkaBrokerList)
-	// 周期清理超时 pending_upload，避免长期堆积脏记录。
+	// 7) 周期清理超时 pending_upload，避免长期堆积脏记录。
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -114,42 +119,7 @@ func main() {
 		}
 	}()
 
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	r.GET("/api/v1/admin/file-scan/dlq", func(c *gin.Context) {
-		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-		tasks, err := fileSvc.ListDLQTasks(limit, offset)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"items": tasks, "count": len(tasks)})
-	})
-	r.POST("/api/v1/admin/file-scan/dlq/:file_id/replay", func(c *gin.Context) {
-		fileID64, err := strconv.ParseUint(c.Param("file_id"), 10, 64)
-		if err != nil || fileID64 == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file_id"})
-			return
-		}
-		_, err = fileSvc.ReplayDLQTask(uint(fileID64))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		evt := filemodel.FileScanEvent{
-			TraceID: fmt.Sprintf("scan-replay-%d", time.Now().UnixNano()),
-			FileID:  uint(fileID64),
-			Retry:   0,
-		}
-		data, _ := json.Marshal(evt)
-		if err := producer.SendMessage(c.Request.Context(), "file-scan", "", data); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "replayed"})
-	})
+	httpServer.RegisterRoutes(r)
 	log.Println("file-service gRPC :9015, health :9006")
 	if err := r.Run(":9006"); err != nil {
 		log.Fatal(err)

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PIM Stage5 Dashboards
+    orgId: 1
+    folder: PIM
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards/pim

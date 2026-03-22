@@ -16,13 +16,14 @@ import (
 	"pim/internal/config"
 	friendhandler "pim/internal/friend/handler"
 	friendmodel "pim/internal/friend/model"
+	observemetrics "pim/internal/observability/metrics"
 	pbfriend "pim/internal/friend/pb"
 	friendrepo "pim/internal/friend/repo"
 	friendservice "pim/internal/friend/service"
 )
 
 func main() {
-	// database
+	// 1) 初始化 PostgreSQL，承载好友关系与申请状态。
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		config.DBHost,
@@ -38,7 +39,7 @@ func main() {
 	if err := db.AutoMigrate(&friendmodel.Friend{}, &friendmodel.FriendRequest{}, &friendmodel.Blacklist{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
-	// redis client
+	// 2) 初始化 Redis（好友列表缓存等高频读场景）。
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
@@ -50,9 +51,11 @@ func main() {
 	defer rdb.Close()
 	log.Printf("RedisAddr from config: %s", config.RedisAddr)
 
-	r := gin.Default()
-	// grpc server
-	// friend service
+	r := gin.New()
+	observemetrics.UseGinDefaultMiddleware(r)
+	r.Use(observemetrics.HTTPServerMetricsMiddleware("friend-service"))
+	observemetrics.RegisterMetricsRoute(r)
+	// 3) 启动 gRPC 服务（Friend 主能力）。
 	grpcServer := grpc.NewServer()
 	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb))
 	pbfriend.RegisterFriendServiceServer(grpcServer, friendhandler.NewGRPCFriendServer(friendSvc))
@@ -60,14 +63,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
-	// start grpc server
+	// gRPC 与 HTTP 健康检查分离：gRPC 处理业务，HTTP 仅供探活。
 	go func() {
 		if err := grpcServer.Serve(listener); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
-	// HTTP: 仅健康检查
+	// 4) 暴露最小 HTTP（健康检查）。
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"pim/internal/config"
@@ -34,10 +35,16 @@ func StartConsumers(ctx context.Context, svc *fileservice.Service, producer *kaf
 			})
 			return nil
 		}
+		traceID := evt.TraceID
+		if traceID == "" {
+			traceID = "unknown"
+		}
+		eventID := "file-scan:" + strconv.FormatUint(uint64(evt.FileID), 10)
 		// 阶段4：模拟扫描结果固定为 ok，后续可替换为真实扫描引擎回调。
 		if _, err := svc.ApplyScanResult(evt.FileID, "ok", ""); err != nil {
 			log.Printf("file-scan apply result failed file_id=%d err=%v", evt.FileID, err)
 			if evt.Retry < config.FileScanMaxRetry {
+				// 重试次数未耗尽：记录下一次重试时间并延迟重新投递。
 				next := evt
 				next.Retry = evt.Retry + 1
 				delay := calcBackoff(next.Retry)
@@ -47,6 +54,7 @@ func StartConsumers(ctx context.Context, svc *fileservice.Service, producer *kaf
 					log.Printf("file-scan retry schedule failed file_id=%d retry=%d err=%v", evt.FileID, next.Retry, sendErr)
 				}
 			} else {
+				// 超过最大重试：标记任务为 dead_letter，并投递到 DLQ topic 供人工处理。
 				_, _ = svc.MarkScanFailed(evt.FileID, "scan_retry_exceeded")
 				dlqData, _ := json.Marshal(evt)
 				_ = producer.SendMessage(ctx, config.FileScanDLQTopic, "", dlqData)
@@ -55,19 +63,20 @@ func StartConsumers(ctx context.Context, svc *fileservice.Service, producer *kaf
 				TS:        time.Now(),
 				Level:     "error",
 				Service:   "file",
-				TraceID:   evt.TraceID,
+				TraceID:   traceID,
 				Msg:       "file-scan apply failed",
-				EventID:   "file-scan",
+				EventID:   eventID,
 				ErrorCode: "scan_apply_failed",
 			})
+			return nil
 		}
 		emitConsumerLog(producer, logmodel.Log{
 			TS:      time.Now(),
 			Level:   "info",
 			Service: "file",
-			TraceID: evt.TraceID,
+			TraceID: traceID,
 			Msg:     "file-scan consumed",
-			EventID: "file-scan",
+			EventID: eventID,
 		})
 		return nil
 	}); err != nil {
@@ -109,6 +118,7 @@ func scheduleRetry(ctx context.Context, producer *kafka.Producer, evt filemodel.
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			// 延迟到期后重新投递原 topic，让同一消费流程继续处理。
 			data, _ := json.Marshal(evt)
 			if err := producer.SendMessage(context.Background(), "file-scan", "", data); err != nil {
 				log.Printf("file-scan retry publish failed file_id=%d retry=%d err=%v", evt.FileID, evt.Retry, err)
@@ -121,6 +131,9 @@ func scheduleRetry(ctx context.Context, producer *kafka.Producer, evt filemodel.
 func emitConsumerLog(producer *kafka.Producer, entry logmodel.Log) {
 	if producer == nil {
 		return
+	}
+	if entry.TS.IsZero() {
+		entry.TS = time.Now()
 	}
 	entry, ok := logkit.ApplyPolicy(entry, config.LogInfoSamplePct)
 	if !ok {

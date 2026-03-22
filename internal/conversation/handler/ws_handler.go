@@ -3,24 +3,19 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"pim/internal/conversation/model"
 	pbconversation "pim/internal/conversation/pb"
+	observemetrics "pim/internal/observability/metrics"
 )
 
-// WebSocket 连接管理：维护 userID -> websocket.Conn 的本地映射。
-var (
-	upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	wsConns  = make(map[uint]*websocket.Conn)
-	wsMu     sync.RWMutex
-)
+var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 // MessageProducer 封装 Kafka 生产能力，便于在 WebSocket 入口复用。
 type MessageProducer interface {
@@ -37,13 +32,17 @@ func WebSocketHandler(client pbconversation.ConversationServiceClient, producer 
 			log.Printf("Failed to upgrade to WebSocket: %v", err)
 			return
 		}
-		wsMu.Lock()
-		wsConns[userID] = conn
-		wsMu.Unlock()
+		observemetrics.ObserveGatewayWSConnected()
+		defer observemetrics.ObserveGatewayWSDisconnected()
+		setUserConn(userID, conn)
 		for {
 			var msg model.WSIncomingMessage
 			if err := conn.ReadJSON(&msg); err != nil {
 				break
+			}
+			if msg.ClientMsgID == "" {
+				// Ensure every message has a stable event_id for cross-service tracing.
+				msg.ClientMsgID = uuid.NewString()
 			}
 			tid, _ := c.Get("trace_id")
 			if producer != nil {
@@ -59,23 +58,7 @@ func WebSocketHandler(client pbconversation.ConversationServiceClient, producer 
 				}
 			}
 		}
-		wsMu.Lock()
-		delete(wsConns, userID)
-		wsMu.Unlock()
+		deleteUserConn(userID)
 		_ = conn.Close()
 	}
-}
-
-// PushToUser 按 userID 查找本地连接并下行推送消息。
-func PushToUser(toUserID uint, fromUserID uint, content string) error {
-	wsMu.RLock()
-	conn := wsConns[toUserID]
-	wsMu.RUnlock()
-	if conn == nil {
-		return fmt.Errorf("user %d not connected", toUserID)
-	}
-	if err := conn.WriteJSON(model.PushMessage{From: fromUserID, Content: content}); err != nil {
-		return fmt.Errorf("write to user %d failed: %w", toUserID, err)
-	}
-	return nil
 }

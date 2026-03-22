@@ -1,7 +1,7 @@
 window.buildAdminMethods = function buildAdminMethods() {
   return {
     backIM() {
-      location.href = "./im.html";
+      location.href = "./index.html";
     },
     async safeCall(fn, fallback) {
       this.error = "";
@@ -107,13 +107,50 @@ window.buildAdminMethods = function buildAdminMethods() {
       this.healthServices = Array.isArray(res.services) ? res.services : [];
     },
     async loadMetrics() {
-      const res = await apiRequest("/api/v1/admin/metrics");
+      let res;
+      try {
+        // Stage5 contract-first endpoint for frontend observability.
+        res = await apiRequest("/api/v1/admin/observability/overview");
+      } catch (_) {
+        // Backward compatibility for older gateway versions.
+        const legacy = await apiRequest("/api/v1/admin/metrics");
+        res = {
+          service_health: [],
+          api_quality: [],
+          message_pipeline: [],
+          gateway_connections: { node: "gateway-1", active_connections: Number(legacy.online_users || 0), connect_rate: 0, disconnect_rate: 0 },
+          alerts_overview: { active_count: 0, severity: "none", source: "none", started_at: "" },
+          slo_overview: {
+            api_availability_target: 0.99,
+            api_availability_now: 0,
+            api_availability_met: false,
+            api_p95_target_ms: 300,
+            api_p95_now_ms: 0,
+            api_p95_met: false,
+            msg_e2e_p95_target_ms: 500,
+            msg_e2e_p95_now_ms: 0,
+            msg_e2e_p95_met: false,
+          },
+          generated_at: String(legacy.generated_at || ""),
+        };
+      }
       this.overview = {
-        online_users: Number(res.online_users || 0),
-        total_logs: Number(res.total_logs || 0),
-        last_15m_logs: Number(res.last_15m_logs || 0),
-        by_level: res.by_level || {},
-        by_service: res.by_service || {},
+        service_health: Array.isArray(res.service_health) ? res.service_health : [],
+        api_quality: Array.isArray(res.api_quality) ? res.api_quality : [],
+        message_pipeline: Array.isArray(res.message_pipeline) ? res.message_pipeline : [],
+        gateway_connections: res.gateway_connections || { node: "gateway-1", active_connections: 0, connect_rate: 0, disconnect_rate: 0 },
+        alerts_overview: res.alerts_overview || { active_count: 0, severity: "none", source: "none", started_at: "" },
+        slo_overview: res.slo_overview || {
+          api_availability_target: 0.99,
+          api_availability_now: 0,
+          api_availability_met: false,
+          api_p95_target_ms: 300,
+          api_p95_now_ms: 0,
+          api_p95_met: false,
+          msg_e2e_p95_target_ms: 500,
+          msg_e2e_p95_now_ms: 0,
+          msg_e2e_p95_met: false,
+        },
         generated_at: String(res.generated_at || ""),
       };
     },

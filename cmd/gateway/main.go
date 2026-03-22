@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 
@@ -20,13 +21,18 @@ import (
 	pbuser "pim/internal/user/pb"
 
 	"pim/internal/config"
+	observemetrics "pim/internal/observability/metrics"
 )
 
 func main() {
-	r := gin.Default()
+	r := gin.New()
+	observemetrics.UseGinDefaultMiddleware(r)
 	r.Use(gatewayhandler.CORSMiddleware())
 	r.Use(gatewayhandler.TraceMiddleware())
+	r.Use(observemetrics.HTTPServerMetricsMiddleware("gateway"))
+	observemetrics.RegisterMetricsRoute(r)
 
+	// 1) 初始化 Redis，供在线状态与未读等网关逻辑复用。
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
@@ -36,45 +42,40 @@ func main() {
 		log.Fatalf("Failed to connect to redis: %v", err)
 	}
 	defer redisClient.Close()
-	// 连接 auth service
-	authConn, err := grpc.NewClient("localhost:9005", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// 建立到各后端服务的 gRPC 连接。
+	authConn, err := dialGRPC("auth service", "localhost:9005")
 	if err != nil {
-		log.Fatalf("Failed to connect to auth service: %v", err)
+		log.Fatal(err)
 	}
 	defer authConn.Close()
 	authClient := pbauth.NewAuthServiceClient(authConn)
-	// 连接 user service
-	userConn, err := grpc.NewClient("localhost:9011", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	userConn, err := dialGRPC("user service", "localhost:9011")
 	if err != nil {
-		log.Fatalf("Failed to connect to user service: %v", err)
+		log.Fatal(err)
 	}
 	defer userConn.Close()
 	userClient := pbuser.NewUserServiceClient(userConn)
-	// 连接 friend service
-	friendConn, err := grpc.NewClient("localhost:9012", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	friendConn, err := dialGRPC("friend service", "localhost:9012")
 	if err != nil {
-		log.Fatalf("Failed to connect to friend service: %v", err)
+		log.Fatal(err)
 	}
 	defer friendConn.Close()
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
-	// 连接 conversation service
-	conversationConn, err := grpc.NewClient("localhost:9013", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conversationConn, err := dialGRPC("conversation service", "localhost:9013")
 	if err != nil {
-		log.Fatalf("Failed to connect to conversation service: %v", err)
+		log.Fatal(err)
 	}
 	defer conversationConn.Close()
 	conversationClient := pbconversation.NewConversationServiceClient(conversationConn)
-	// 连接 group service
-	groupConn, err := grpc.NewClient("localhost:9014", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	groupConn, err := dialGRPC("group service", "localhost:9014")
 	if err != nil {
-		log.Fatalf("Failed to connect to group service: %v", err)
+		log.Fatal(err)
 	}
 	defer groupConn.Close()
 	groupClient := pbgroup.NewGroupServiceClient(groupConn)
-	// 连接 file service
-	fileConn, err := grpc.NewClient("localhost:9015", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	fileConn, err := dialGRPC("file service", "localhost:9015")
 	if err != nil {
-		log.Fatalf("Failed to connect to file service: %v", err)
+		log.Fatal(err)
 	}
 	defer fileConn.Close()
 	fileClient := pbfile.NewFileServiceClient(fileConn)
@@ -99,7 +100,7 @@ func main() {
 	}()
 	httpServer.RegisterRoutes(r)
 
-	// 启动 push service 用于处理 WebSocket 连接
+	// 2) 启动 PushService gRPC：供 conversation/group 消费端做实时下行。
 	go func() {
 		lis, err := net.Listen("tcp", ":8090")
 		if err != nil {
@@ -113,7 +114,16 @@ func main() {
 		}
 	}()
 
+	// 3) 启动网关 HTTP 主入口。
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+func dialGRPC(name, target string) (*grpc.ClientConn, error) {
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s: %w", name, err)
+	}
+	return conn, nil
 }

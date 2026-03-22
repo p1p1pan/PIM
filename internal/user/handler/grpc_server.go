@@ -38,6 +38,7 @@ func (s *GRPCUserServer) Register(ctx context.Context, req *pbuser.RegisterReque
 		log.Printf("[trace=%s] user.Register: failed to register user: %v", traceID, err)
 		return nil, status.Errorf(codes.Internal, "failed to register user: %v", err)
 	}
+	// 协议层只做输入校验与错误映射，密码加密等逻辑由 service 处理。
 	return &pbuser.RegisterResponse{Message: "User registered successfully", User: userToPB(u)}, nil
 }
 
@@ -68,6 +69,7 @@ func (s *GRPCUserServer) Login(ctx context.Context, req *pbuser.LoginRequest) (*
 		log.Printf("[trace=%s] user.Login: login failed: %v", traceID, err)
 		return nil, status.Errorf(codes.Unauthenticated, "%v", err)
 	}
+	// token 在 service 生成，这里仅负责组装返回协议。
 	return &pbuser.LoginResponse{Message: "Login successful", Token: token, User: userToPB(u)}, nil
 }
 

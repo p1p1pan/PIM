@@ -59,6 +59,7 @@ func (s *GRPCAuthServer) Login(ctx context.Context, req *pbauth.LoginRequest) (*
 		}
 		return nil, status.Errorf(codes.Unauthenticated, "login failed")
 	}
+	// Auth 透传 user-service 的 token，不在此层重复签发，避免双 token 源。
 	u := userResp.GetUser()
 	return &pbauth.LoginResponse{
 		Message:     userResp.GetMessage(),

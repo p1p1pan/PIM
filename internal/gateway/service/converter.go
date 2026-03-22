@@ -13,6 +13,7 @@ func UserFromPB(u *pbuser.User) gin.H {
 	if u == nil {
 		return nil
 	}
+	// 统一在 gateway 层做字段命名映射，前端无需关心 pb 字段风格。
 	return gin.H{
 		"id":         u.Id,
 		"username":   u.Username,
@@ -29,6 +30,7 @@ func FriendFromPB(f *pbfriend.Friend) gin.H {
 	if f == nil {
 		return nil
 	}
+	// friend 结构保持扁平，便于列表直接渲染。
 	return gin.H{
 		"id":         f.Id,
 		"user_id":    f.UserId,
@@ -42,6 +44,7 @@ func MessageFromPB(m *pbconversation.Message) gin.H {
 	if m == nil {
 		return nil
 	}
+	// 消息响应字段与前端消费字段保持一致，避免重复转换。
 	return gin.H{
 		"id":           m.Id,
 		"from_user_id": m.FromUserId,

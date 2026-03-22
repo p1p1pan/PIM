@@ -1,0 +1,79 @@
+{
+  "title": "PIM Stage5 Overview",
+  "uid": "pim-stage5-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "timezone": "browser",
+  "tags": ["pim", "stage5", "observability"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Services Up",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(up{job=~\"pim-.*\"})"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Down Services",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [{"refId": "A", "expr": "sum((up{job=~\"pim-.*\"} == 0))"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP QPS by Service",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service) (rate(pim_http_requests_total[1m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP 5xx Error Rate by Service",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (service) (rate(pim_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum by (service) (rate(pim_http_requests_total[5m])), 0.0001))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Gateway Active WS Connections",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [{"refId": "A", "expr": "pim_gateway_ws_connections"}]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Kafka Produce/Consume by Topic",
+      "gridPos": {"h": 7, "w": 16, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (topic, direction) (rate(pim_kafka_messages_total{result=\"ok\"}[1m]))",
+          "legendFormat": "{{topic}} {{direction}}"
+        }
+      ]
+    }
+  ]
+}

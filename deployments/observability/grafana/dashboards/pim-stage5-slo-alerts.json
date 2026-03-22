@@ -1,0 +1,94 @@
+{
+  "title": "PIM Stage5 SLO & Alerts",
+  "uid": "pim-stage5-slo-alerts",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "timezone": "browser",
+  "tags": ["pim", "stage5", "slo", "alerts"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API Availability (5m)",
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - (sum(rate(pim_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(pim_http_requests_total[5m])), 0.0001))) * 100"
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP p95 Latency by Service (ms)",
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(pim_http_request_duration_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP 5xx Error Rate by Service",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (service) (rate(pim_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum by (service) (rate(pim_http_requests_total[5m])), 0.0001))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active Alerts",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(ALERTS{alertstate=\"firing\"})"
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Kafka Consumer Errors (10m increase)",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (topic) (increase(pim_kafka_messages_total{direction=\"consume\",result=~\"handler_error|consumer_error\"}[10m]))",
+          "legendFormat": "{{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "DLQ Growth (15m increase)",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "pim-prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(pim_kafka_messages_total{topic=\"file-scan-dlq\",direction=\"produce\",result=\"ok\"}[15m])"
+        }
+      ]
+    }
+  ]
+}

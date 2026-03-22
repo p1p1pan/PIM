@@ -6,7 +6,7 @@ window.ADMIN_TEMPLATE = `
     <button class="menu" :class="{active: activeMenu==='logs'}" @click="switchMenu('logs')">日志中心</button>
     <button class="menu" :class="{active: activeMenu==='fileDlq'}" @click="switchMenu('fileDlq')">文件扫描死信</button>
     <button class="menu" :class="{active: activeMenu==='health'}" @click="switchMenu('health')">服务健康</button>
-    <button class="menu ghost" @click="backIM">返回IM</button>
+    <button class="menu ghost" @click="backIM">返回入口</button>
   </aside>
 
   <section class="main" v-if="activeMenu==='overview'">
@@ -19,21 +19,79 @@ window.ADMIN_TEMPLATE = `
         </div>
       </div>
       <div class="overview-cards">
-        <div class="kpi"><div class="k">在线连接</div><div class="v">{{ overview.online_users }}</div></div>
-        <div class="kpi"><div class="k">日志总量</div><div class="v">{{ overview.total_logs }}</div></div>
-        <div class="kpi"><div class="k">近15分钟日志</div><div class="v">{{ overview.last_15m_logs }}</div></div>
+        <div class="kpi"><div class="k">在线连接</div><div class="v">{{ overview.gateway_connections.active_connections || 0 }}</div></div>
+        <div class="kpi"><div class="k">活跃告警</div><div class="v">{{ overview.alerts_overview.active_count || 0 }}</div></div>
+        <div class="kpi"><div class="k">API 可用性</div><div class="v">{{ Math.round((overview.slo_overview.api_availability_now || 0) * 10000) / 100 }}%</div></div>
+        <div class="kpi"><div class="k">连接速率(/s)</div><div class="v">{{ Number(overview.gateway_connections.connect_rate || 0).toFixed(3) }}</div></div>
+        <div class="kpi"><div class="k">断开速率(/s)</div><div class="v">{{ Number(overview.gateway_connections.disconnect_rate || 0).toFixed(3) }}</div></div>
       </div>
       <div class="health-grid">
         <div class="health-card">
-          <div class="row"><div class="name">按级别分布</div></div>
-          <div class="sub" v-for="(v,k) in overview.by_level" :key="'lvl-'+k">{{ k }}: {{ v }}</div>
-          <div class="sub" v-if="Object.keys(overview.by_level || {}).length===0">暂无数据</div>
+          <div class="row"><div class="name">告警状态</div><span class="badge" :class="(overview.alerts_overview.severity||'none')==='none' ? 'ok' : 'down'">{{ overview.alerts_overview.severity || 'none' }}</span></div>
+          <div class="sub">source: {{ overview.alerts_overview.source || '-' }}</div>
+          <div class="sub">started_at: {{ overview.alerts_overview.started_at || '-' }}</div>
+          <div class="sub">gateway node: {{ overview.gateway_connections.node || '-' }}</div>
         </div>
         <div class="health-card">
-          <div class="row"><div class="name">按服务分布</div></div>
-          <div class="sub" v-for="(v,k) in overview.by_service" :key="'svc-'+k">{{ k }}: {{ v }}</div>
-          <div class="sub" v-if="Object.keys(overview.by_service || {}).length===0">暂无数据</div>
+          <div class="row"><div class="name">SLO 快照</div><span class="badge" :class="overview.slo_overview.api_availability_met ? 'ok' : 'down'">{{ overview.slo_overview.api_availability_met ? 'met' : 'not_met' }}</span></div>
+          <div class="sub">availability target: {{ overview.slo_overview.api_availability_target }}</div>
+          <div class="sub">api p95 now(ms): {{ overview.slo_overview.api_p95_now_ms || 0 }}</div>
+          <div class="sub">api p95 target(ms): {{ overview.slo_overview.api_p95_target_ms }}</div>
+          <div class="sub">msg e2e p95 now(ms): {{ overview.slo_overview.msg_e2e_p95_now_ms || 0 }}</div>
+          <div class="sub">msg e2e p95 target(ms): {{ overview.slo_overview.msg_e2e_p95_target_ms }}</div>
+          <div class="sub">msg e2e met: {{ overview.slo_overview.msg_e2e_p95_met ? 'yes' : 'no' }}</div>
         </div>
+      </div>
+      <div class="table-wrap">
+        <h4>API 质量（Top 12）</h4>
+        <table class="simple-table" v-if="overview.api_quality && overview.api_quality.length">
+          <thead><tr><th>service</th><th>route</th><th>qps</th><th>error_rate</th><th>p95(ms)</th></tr></thead>
+          <tbody>
+            <tr v-for="(row, idx) in overview.api_quality.slice(0, 12)" :key="'aq-'+idx">
+              <td>{{ row.service }}</td>
+              <td>{{ row.route }}</td>
+              <td>{{ Number(row.qps || 0).toFixed(3) }}</td>
+              <td>{{ Number(row.error_rate || 0).toFixed(4) }}</td>
+              <td>{{ row.p95_latency_ms || 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="empty" v-else>暂无 API 质量数据</div>
+      </div>
+      <div class="table-wrap">
+        <h4>消息链路（Topic）</h4>
+        <table class="simple-table" v-if="overview.message_pipeline && overview.message_pipeline.length">
+          <thead><tr><th>topic</th><th>produce_rate</th><th>consume_rate</th><th>produce_total</th><th>consume_total</th><th>retry_count</th><th>dlq_count</th></tr></thead>
+          <tbody>
+            <tr v-for="(row, idx) in overview.message_pipeline" :key="'mp-'+idx">
+              <td>{{ row.topic }}</td>
+              <td>{{ Number(row.produce_rate || 0).toFixed(3) }}</td>
+              <td>{{ Number(row.consume_rate || 0).toFixed(3) }}</td>
+              <td>{{ row.produce_total || 0 }}</td>
+              <td>{{ row.consume_total || 0 }}</td>
+              <td>{{ row.retry_count || 0 }}</td>
+              <td>{{ row.dlq_count || 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="empty" v-else>暂无消息链路数据</div>
+      </div>
+      <div class="table-wrap">
+        <h4>服务健康快照</h4>
+        <table class="simple-table" v-if="overview.service_health && overview.service_health.length">
+          <thead><tr><th>service</th><th>up</th><th>error_rate</th><th>p95_latency_ms</th></tr></thead>
+          <tbody>
+            <tr v-for="(row, idx) in overview.service_health" :key="'sh-'+idx">
+              <td>{{ row.service }}</td>
+              <td>
+                <span class="badge" :class="row.up ? 'ok' : 'down'">{{ row.up ? 'up' : 'down' }}</span>
+              </td>
+              <td>{{ Number(row.error_rate || 0).toFixed(4) }}</td>
+              <td>{{ row.p95_latency_ms || 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="empty" v-else>暂无服务健康快照</div>
       </div>
     </div>
   </section>

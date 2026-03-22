@@ -14,7 +14,6 @@ window.IM_TEMPLATE = `
         <span>联系人</span>
       </button>
     </div>
-    <button class="logout-btn" @click="openLogPage">管理后台</button>
     <button class="logout-btn danger-light" @click="logout">退出登录</button>
   </aside>
 

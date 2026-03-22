@@ -80,6 +80,7 @@ func (s *Service) PrepareUpload(in PrepareUploadInput) (*filemodel.File, error) 
 	// 幂等处理
 	if in.ClientUploadID != "" {
 		if old, err := s.repo.GetByOwnerUploadID(in.OwnerUserID, in.ClientUploadID); err == nil {
+			// 幂等命中：直接返回已存在记录，不重复创建对象元数据。
 			return old, nil
 		}
 	}
@@ -133,6 +134,7 @@ func (s *Service) CommitUpload(fileID, ownerID uint, etag string) (*filemodel.Fi
 		return nil, false, ErrFileNotFound
 	}
 	if (current.Status == "pending_upload" || current.Status == "uploaded") && s.store != nil {
+		// 在进入 scanning 前做一次对象存在性校验，避免扫描空对象。
 		ok, err := s.store.ObjectExists(context.Background(), current.ObjectKey)
 		if err != nil {
 			return nil, false, err
@@ -203,6 +205,7 @@ func (s *Service) GetFile(fileID, operatorUserID uint) (*filemodel.File, error) 
 			if checkErr != nil {
 				return nil, checkErr
 			}
+			// 私聊文件要求双方仍为好友，避免历史链接越权访问。
 			allowed = ok
 		case "group":
 			if s.groupChecker == nil {
@@ -212,6 +215,7 @@ func (s *Service) GetFile(fileID, operatorUserID uint) (*filemodel.File, error) 
 			if checkErr != nil {
 				return nil, checkErr
 			}
+			// 群文件权限以“当前是否仍在群内”为准。
 			allowed = ok
 		}
 		if !allowed {
