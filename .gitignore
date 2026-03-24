@@ -33,3 +33,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 .cursor/
+
+# bench artifacts (do not commit / push)
+.bench/
+test/bench/output/
+test/bench/**/*.log
+test/bench/**/*.tmp
