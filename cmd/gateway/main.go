@@ -67,7 +67,7 @@ func main() {
 	}
 	defer conversationConn.Close()
 	conversationClient := pbconversation.NewConversationServiceClient(conversationConn)
-	groupConn, err := dialGRPC("group service", "localhost:9014")
+	groupConn, err := dialGRPC("group service", config.GroupServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -89,6 +89,7 @@ func main() {
 		fileClient,
 		redisClient,
 		config.KafkaBrokerList,
+		config.GatewayNodeID,
 		config.LogServiceHTTPURL,
 		config.FileServiceHTTPURL,
 	)
@@ -99,23 +100,24 @@ func main() {
 		}
 	}()
 	httpServer.RegisterRoutes(r)
+	gatewayhandler.StartGroupMemberSyncConsumer(context.Background(), config.KafkaBrokerList, config.GatewayNodeID)
 
 	// 2) 启动 PushService gRPC：供 conversation/group 消费端做实时下行。
 	go func() {
-		lis, err := net.Listen("tcp", ":8090")
+		lis, err := net.Listen("tcp", config.GatewayPushGRPCAddr)
 		if err != nil {
 			log.Fatalf("Failed to listen for PushService: %v", err)
 		}
 		grpcServer := grpc.NewServer()
 		pbgateway.RegisterPushServiceServer(grpcServer, gatewayhandler.NewPushServiceServer())
-		log.Println("Gateway PushService gRPC listening on :8090")
+		log.Printf("Gateway PushService gRPC listening on %s (node=%s)", config.GatewayPushGRPCAddr, config.GatewayNodeID)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve PushService gRPC: %v", err)
 		}
 	}()
 
 	// 3) 启动网关 HTTP 主入口。
-	if err := r.Run(":8080"); err != nil {
+	if err := r.Run(config.GatewayHTTPAddr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

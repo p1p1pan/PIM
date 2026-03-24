@@ -313,7 +313,7 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 		"api_quality":      apiQuality,
 		"message_pipeline": messagePipeline,
 		"gateway_connections": gin.H{
-			"node":               "gateway-1",
+			"node":               s.nodeID,
 			"active_connections": metricGauge(metricFamilies, "pim_gateway_ws_connections"),
 			"connect_rate":       connectRate,
 			"disconnect_rate":    disconnectRate,

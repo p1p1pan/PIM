@@ -24,6 +24,14 @@ type Service struct {
 	repo *repo.Repo
 }
 
+// SendInput 是消费侧传入的单聊消息输入（用于批量幂等落库）。
+type SendInput struct {
+	FromID      uint
+	ToID        uint
+	Content     string
+	ClientMsgID string
+}
+
 // NewService 创建会话服务实例。
 func NewService(r *repo.Repo) *Service { return &Service{repo: r} }
 
@@ -55,6 +63,36 @@ func (s *Service) SendMessageIdempotent(fromID, toID uint, content string, clien
 	}
 	// created=false 代表命中幂等（同 client_msg_id），调用方可避免重复后续处理。
 	return m, created, nil
+}
+
+// SendMessageIdempotentBatch 批量处理幂等消息，保持输入顺序返回结果。
+func (s *Service) SendMessageIdempotentBatch(inputs []SendInput) ([]*model.Message, []bool, error) {
+	if len(inputs) == 0 {
+		return nil, nil, nil
+	}
+	batch := make([]repo.SendInput, 0, len(inputs))
+	for _, in := range inputs {
+		if in.FromID == 0 || in.ToID == 0 {
+			return nil, nil, ErrInvalidUserID
+		}
+		if in.Content == "" {
+			return nil, nil, ErrEmptyContent
+		}
+		batch = append(batch, repo.SendInput{
+			FromID:      in.FromID,
+			ToID:        in.ToID,
+			Content:     in.Content,
+			ClientMsgID: in.ClientMsgID,
+		})
+	}
+	msgs, created, err := s.repo.SendMessageIdempotentBatch(batch)
+	if err != nil {
+		if err.Error() == ErrNotFriends.Error() {
+			return nil, nil, ErrNotFriends
+		}
+		return nil, nil, err
+	}
+	return msgs, created, nil
 }
 
 // ListConversations 查询用户会话列表。

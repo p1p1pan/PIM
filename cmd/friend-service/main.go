@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -10,10 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"pim/internal/config"
+	pimdb "pim/internal/db"
 	friendhandler "pim/internal/friend/handler"
 	friendmodel "pim/internal/friend/model"
 	observemetrics "pim/internal/observability/metrics"
@@ -24,15 +22,7 @@ import (
 
 func main() {
 	// 1) 初始化 PostgreSQL，承载好友关系与申请状态。
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DBHost,
-		config.DBPort,
-		config.DBUser,
-		config.DBPassword,
-		config.DBName,
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}

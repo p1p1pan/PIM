@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package group.v1;
+
+option go_package = "pim/proto/group/v1;pbgroup";
+
+// GroupPushMessage 为 group-service -> gateway PushService 的内部下行载荷。
+message GroupPushMessage {
+  string type = 1; // group_message
+  uint64 group_id = 2;
+  uint64 from_user_id = 3;
+  string message_type = 4;
+  string content = 5;
+  uint64 seq = 6;
+}

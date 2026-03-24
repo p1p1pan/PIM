@@ -14,8 +14,10 @@ import (
 
 // handleFilePrepare 申请文件上传。
 func (s *HTTPServer) handleFilePrepare(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	var req gatewaymodel.FilePrepareRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -47,8 +49,10 @@ func (s *HTTPServer) handleFilePrepare(c *gin.Context) {
 
 // handleFileCommit 确认文件上传完成。
 func (s *HTTPServer) handleFileCommit(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	fileID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || fileID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file id"})
@@ -86,8 +90,10 @@ func (s *HTTPServer) handleFileCommit(c *gin.Context) {
 
 // handleFileGet 查询文件信息/下载地址。
 func (s *HTTPServer) handleFileGet(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	fileID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || fileID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file id"})

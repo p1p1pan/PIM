@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"pim/internal/config"
 	conversationhandler "pim/internal/conversation/handler"
@@ -21,6 +18,7 @@ import (
 	pbconversation "pim/internal/conversation/pb"
 	conversationrepo "pim/internal/conversation/repo"
 	conversationservice "pim/internal/conversation/service"
+	pimdb "pim/internal/db"
 	pbgateway "pim/internal/gateway/pb"
 	"pim/internal/mq/kafka"
 	observemetrics "pim/internal/observability/metrics"
@@ -32,15 +30,7 @@ func main() {
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("conversation-service"))
 	observemetrics.RegisterMetricsRoute(r)
 	// 1) 初始化 PostgreSQL 并迁移会话/消息相关表。
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DBHost,
-		config.DBPort,
-		config.DBUser,
-		config.DBPassword,
-		config.DBName,
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -61,26 +51,36 @@ func main() {
 	}
 	log.Println("conversation-service connected to Redis")
 
-	// 3) 连接 Gateway PushService，负责实时下行。
-	pushConn, err := grpc.NewClient("localhost:8090", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Failed to connect to gateway PushService: %v", err)
+	// 3) 连接 Gateway PushService（支持多 gateway 节点路由）。
+	pushTargets := config.ParseGatewayPushTargets(config.GatewayPushGRPCTargets, config.GatewayPushGRPCTarget)
+	pushClients := make(map[string]pbgateway.PushServiceClient, len(pushTargets))
+	pushConns := make([]*grpc.ClientConn, 0, len(pushTargets))
+	for node, target := range pushTargets {
+		conn, dialErr := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if dialErr != nil {
+			log.Fatalf("Failed to connect to gateway PushService node=%s target=%s: %v", node, target, dialErr)
+		}
+		pushConns = append(pushConns, conn)
+		pushClients[node] = pbgateway.NewPushServiceClient(conn)
 	}
-	defer pushConn.Close()
-	pushClient := pbgateway.NewPushServiceClient(pushConn)
+	defer func() {
+		for _, c := range pushConns {
+			_ = c.Close()
+		}
+	}()
 
 	// 4) 启动 Kafka 消费链路（消息落库、已读推进、在线推送）。
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	conversationSvc := conversationservice.NewService(conversationrepo.NewRepo(db))
-	producer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: config.KafkaBrokerList})
+	producer := kafka.NewProducer(kafka.DefaultProducerConfig(config.KafkaBrokerList))
 	defer producer.Close()
 
-	conversationmq.StartConsumers(ctx, conversationSvc, rdb, pushClient, producer, config.KafkaBrokerList)
+	conversationmq.StartConsumers(ctx, conversationSvc, rdb, pushClients, producer, config.KafkaBrokerList)
 	// 5) 启动 gRPC 服务（Conversation 主能力）。
 	grpcServer := grpc.NewServer()
 	pbconversation.RegisterConversationServiceServer(grpcServer, conversationhandler.NewGRPCConversationServer(conversationSvc))
-	listener, err := net.Listen("tcp", ":9013")
+	listener, err := net.Listen("tcp", config.ConversationGRPCAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -95,8 +95,8 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	log.Println("conversation-service gRPC :9013, health :9003")
-	if err := r.Run(":9003"); err != nil {
+	log.Printf("conversation-service gRPC %s, health %s", config.ConversationGRPCAddr, config.ConversationHTTPAddr)
+	if err := r.Run(config.ConversationHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

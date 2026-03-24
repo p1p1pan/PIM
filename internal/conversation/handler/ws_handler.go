@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -53,12 +53,27 @@ func WebSocketHandler(client pbconversation.ConversationServiceClient, producer 
 					Content:     msg.Content,
 					ClientMsgID: msg.ClientMsgID,
 				}
-				if data, err := json.Marshal(kmsg); err == nil {
-					_ = producer.SendMessage(context.Background(), "im-message", "", data)
+				if data, err := model.EncodeKafkaMessagePB(kmsg); err != nil {
+					log.Printf("ws protobuf marshal kafka message: %v", err)
+					continue
+				} else if err := producer.SendMessage(context.Background(), "im-message", conversationKey(userID, msg.To), data); err != nil {
+					log.Printf("ws kafka send: %v", err)
+					_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack_error", ClientMsgID: msg.ClientMsgID, Error: err.Error()})
+				} else {
+					// 入队成功即确认，便于客户端测量「发送路径」而不等待对端 Push（端到端见 bench-msg-latency -measure e2e）。
+					_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack", ClientMsgID: msg.ClientMsgID})
 				}
 			}
 		}
 		deleteUserConn(userID)
 		_ = conn.Close()
 	}
+}
+
+// conversationKey 把同一对单聊用户稳定映射到同一个 Kafka key，保证会话内消息落同分区以维持顺序。
+func conversationKey(a, b uint) string {
+	if a < b {
+		return fmt.Sprintf("%d:%d", a, b)
+	}
+	return fmt.Sprintf("%d:%d", b, a)
 }

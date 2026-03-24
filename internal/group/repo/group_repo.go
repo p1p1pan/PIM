@@ -9,9 +9,21 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+func lockGroupSeq(tx *gorm.DB, groupID uint) error {
+	// PostgreSQL 事务级 advisory lock：按 groupID 串行化 seq 分配，避免每条消息都查询/锁 groups 表。
+	return tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(groupID)).Error
+}
+
 // GroupRepo 负责 Group 领域 DB 访问。
 type GroupRepo struct {
 	db *gorm.DB
+}
+
+type SaveGroupMessageInput struct {
+	GroupID    uint
+	FromUserID uint
+	Content    string
+	EventID    string
 }
 
 // NewGroupRepo 创建 GroupRepo。
@@ -104,25 +116,24 @@ func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, message
 	var saved model.GroupMessage
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 先按 event_id 命中幂等记录（重复消费直接返回旧消息）。
-		if err := tx.Where("event_id = ?", eventID).First(&saved).Error; err == nil {
+		if err := tx.Where("event_id = ?", eventID).Limit(1).Find(&saved).Error; err == nil && saved.ID != 0 {
 			// 幂等命中：同 event_id 重复写入直接复用既有记录。
 			return nil
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		} else if err != nil {
 			return err
 		}
 
-		// 锁住 group 行，串行化同一 group 的 seq 分配。
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&model.Group{}, groupID).Error; err != nil {
+		// 使用事务级 advisory lock 按 group 串行化 seq 分配。
+		if err := lockGroupSeq(tx, groupID); err != nil {
 			return err
 		}
 
 		seq := uint64(1)
 		var last model.GroupMessage
-		if err := tx.Where("group_id = ?", groupID).Order("seq DESC").First(&last).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-		} else {
+		if err := tx.Where("group_id = ?", groupID).Order("seq DESC").Limit(1).Find(&last).Error; err != nil {
+			return err
+		}
+		if last.ID != 0 {
 			seq = last.Seq + 1
 		}
 
@@ -136,7 +147,10 @@ func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, message
 		}
 		if err := tx.Create(&msg).Error; err != nil {
 			// 并发重复 event_id 的兜底：回读已有记录。
-			if err2 := tx.Where("event_id = ?", eventID).First(&saved).Error; err2 == nil {
+			if err2 := tx.Where("event_id = ?", eventID).Limit(1).Find(&saved).Error; err2 != nil {
+				return err2
+			}
+			if saved.ID != 0 {
 				return nil
 			}
 			return err
@@ -148,6 +162,96 @@ func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, message
 		return nil, err
 	}
 	return &saved, nil
+}
+
+// SaveGroupMessageIdempotentBatch 在单事务内批量完成同 group 消息的幂等写入与 seq 分配。
+// 要求：inputs 按同 group 传入（通常由上层先按 group 分桶）。
+func (r *GroupRepo) SaveGroupMessageIdempotentBatch(inputs []SaveGroupMessageInput) ([]model.GroupMessage, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	groupID := inputs[0].GroupID
+	out := make([]model.GroupMessage, len(inputs))
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// 1) 预查现有 event_id，命中幂等直接复用。
+		eventIDs := make([]string, 0, len(inputs))
+		for _, in := range inputs {
+			eventIDs = append(eventIDs, in.EventID)
+		}
+		var exists []model.GroupMessage
+		if err := tx.Where("event_id IN ?", eventIDs).Find(&exists).Error; err != nil {
+			return err
+		}
+		existByEvent := make(map[string]model.GroupMessage, len(exists))
+		for _, m := range exists {
+			existByEvent[m.EventID] = m
+		}
+
+		// 2) 使用事务级 advisory lock 串行化同 group 的 seq 分配。
+		if err := lockGroupSeq(tx, groupID); err != nil {
+			return err
+		}
+
+		// 3) 取当前最大 seq，仅一次查询。
+		nextSeq := uint64(1)
+		var last model.GroupMessage
+		if err := tx.Where("group_id = ?", groupID).Order("seq DESC").Limit(1).Find(&last).Error; err != nil {
+			return err
+		}
+		if last.ID != 0 {
+			nextSeq = last.Seq + 1
+		}
+
+		// 4) 构造待插入数据，未命中幂等才分配 seq。
+		toCreate := make([]model.GroupMessage, 0, len(inputs))
+		indexByEvent := make(map[string][]int, len(inputs))
+		for i, in := range inputs {
+			if m, ok := existByEvent[in.EventID]; ok {
+				out[i] = m
+				continue
+			}
+			m := model.GroupMessage{
+				GroupID:     in.GroupID,
+				FromUserID:  in.FromUserID,
+				MessageType: "text",
+				Content:     in.Content,
+				Seq:         nextSeq,
+				EventID:     in.EventID,
+			}
+			nextSeq++
+			toCreate = append(toCreate, m)
+			indexByEvent[in.EventID] = append(indexByEvent[in.EventID], i)
+		}
+
+		// 5) 批量插入，冲突 event_id 忽略（并发重复消费兜底）。
+		if len(toCreate) > 0 {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&toCreate).Error; err != nil {
+				return err
+			}
+		}
+
+		// 6) 回读本批 event_id，填充输出（包括 DoNothing 冲突落库于并发事务的情况）。
+		var all []model.GroupMessage
+		if err := tx.Where("event_id IN ?", eventIDs).Find(&all).Error; err != nil {
+			return err
+		}
+		finalByEvent := make(map[string]model.GroupMessage, len(all))
+		for _, m := range all {
+			finalByEvent[m.EventID] = m
+		}
+		for i, in := range inputs {
+			if m, ok := finalByEvent[in.EventID]; ok {
+				out[i] = m
+				continue
+			}
+			return errors.New("save group message batch: event_id not found after insert")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // NextGroupSeq 计算群内下一条序号（保留给旧逻辑，当前消息主链路已改为事务内分配）。

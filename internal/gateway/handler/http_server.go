@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pbauth "pim/internal/auth/pb"
@@ -26,13 +25,9 @@ import (
 	gatewaymodel "pim/internal/gateway/model"
 	gatewayservice "pim/internal/gateway/service"
 	pbgroup "pim/internal/group/pb"
-	logkit "pim/internal/log/kit"
-	logmodel "pim/internal/log/model"
 	"pim/internal/mq/kafka"
 	pbuser "pim/internal/user/pb"
 )
-
-const gatewayNodeID = "gateway-1"
 
 // HTTPServer 聚合 Gateway HTTP 层依赖。
 type HTTPServer struct {
@@ -45,6 +40,8 @@ type HTTPServer struct {
 	redisClient        *redis.Client
 	kafkaBrokers       []string
 	kafkaProducer      *kafka.Producer
+	groupKafkaDispatch *groupKafkaDispatcher
+	nodeID             string
 	logServiceBaseURL  string
 	fileServiceBaseURL string
 }
@@ -59,11 +56,16 @@ func NewHTTPServer(
 	fileClient pbfile.FileServiceClient,
 	redisClient *redis.Client,
 	kafkaBrokers []string,
+	nodeID string,
 	logServiceBaseURL string,
 	fileServiceBaseURL string,
 ) *HTTPServer {
-	kProducer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: kafkaBrokers})
-	return &HTTPServer{
+	if strings.TrimSpace(nodeID) == "" {
+		nodeID = "gateway-1"
+	}
+	kProducer := kafka.NewProducer(kafka.DefaultProducerConfig(kafkaBrokers))
+	dispatcher := newGroupKafkaDispatcher(kProducer)
+	srv := &HTTPServer{
 		authClient:         authClient,
 		userClient:         userClient,
 		friendClient:       friendClient,
@@ -73,14 +75,34 @@ func NewHTTPServer(
 		redisClient:        redisClient,
 		kafkaBrokers:       kafkaBrokers,
 		kafkaProducer:      kProducer,
+		groupKafkaDispatch: dispatcher,
+		nodeID:             nodeID,
 		logServiceBaseURL:  strings.TrimRight(logServiceBaseURL, "/"),
 		fileServiceBaseURL: strings.TrimRight(fileServiceBaseURL, "/"),
 	}
+	if config.GatewayGroupMemberPrewarmEnabled && redisClient != nil {
+		go func() {
+			timeout := time.Duration(config.GatewayGroupMemberPrewarmTimeoutSec) * time.Second
+			if timeout <= 0 {
+				timeout = 20 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			srv.prewarmGroupMembersLocalIndex(ctx, config.GatewayGroupMemberPrewarmLimit)
+		}()
+	}
+	return srv
 }
 
 // Close 关闭 HTTPServer 关联资源。
 func (s *HTTPServer) Close() error {
-	if s == nil || s.kafkaProducer == nil {
+	if s == nil {
+		return nil
+	}
+	if s.groupKafkaDispatch != nil {
+		s.groupKafkaDispatch.stop()
+	}
+	if s.kafkaProducer == nil {
 		return nil
 	}
 	return s.kafkaProducer.Close()
@@ -115,118 +137,16 @@ func TraceMiddleware() gin.HandlerFunc {
 	}
 }
 
-// AccessLogMiddleware 将网关请求访问日志异步写入 log-topic。
-func (s *HTTPServer) AccessLogMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// 与 Gin 控制台日志一致：探活与指标抓取不写 log-topic，避免刷屏与 ES 噪音。
-		if p := c.Request.URL.Path; p == "/metrics" || p == "/health" {
-			c.Next()
-			return
-		}
-		start := time.Now()
-		c.Next()
-		if s == nil || s.kafkaProducer == nil {
-			return
-		}
-		traceID := c.GetString("trace_id")
-		entry := logmodel.Log{
-			TS:        time.Now(),
-			Level:     "info",
-			Service:   "gateway",
-			TraceID:   traceID,
-			Msg:       "http access",
-			Path:      c.FullPath(),
-			LatencyMS: time.Since(start).Milliseconds(),
-			ErrorCode: fmt.Sprintf("%d", c.Writer.Status()),
-		}
-		if entry.Path == "" {
-			entry.Path = c.Request.URL.Path
-		}
-		if uid, ok := c.Get("userID"); ok {
-			if id, ok := uid.(uint); ok {
-				entry.UserID = uint64(id)
-			}
-		}
-		entry, ok := logkit.ApplyPolicy(entry, config.LogInfoSamplePct)
-		if !ok {
-			return
-		}
-		data, err := json.Marshal(entry)
-		if err != nil {
-			return
-		}
-		_ = s.kafkaProducer.SendMessage(context.Background(), "log-topic", "", data)
-	}
-}
-
-// emitBizLog 将关键业务事件写入 log-topic，供 log-service 聚合检索。
-func (s *HTTPServer) emitBizLog(c *gin.Context, msg string, eventID string, extra map[string]interface{}) {
-	if s == nil || s.kafkaProducer == nil {
-		return
-	}
-	entry := logmodel.Log{
-		TS:      time.Now(),
-		Level:   "info",
-		Service: "gateway",
-		TraceID: c.GetString("trace_id"),
-		Msg:     msg,
-		Path:    c.FullPath(),
-		EventID: eventID,
-	}
-	if entry.Path == "" {
-		entry.Path = c.Request.URL.Path
-	}
-	if uid, ok := c.Get("userID"); ok {
-		if id, ok := uid.(uint); ok {
-			entry.UserID = uint64(id)
-		}
-	}
-	if extra != nil {
-		if gid, ok := extra["group_id"].(uint64); ok {
-			entry.GroupID = gid
-		}
-		if cid, ok := extra["conversation_id"].(string); ok {
-			entry.ConversationID = cid
-		}
-	}
-	entry, ok := logkit.ApplyPolicy(entry, config.LogInfoSamplePct)
-	if !ok {
-		return
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	_ = s.kafkaProducer.SendMessage(context.Background(), "log-topic", "", data)
-}
-
-// ctxWithTrace 将 Gin 上下文中的 trace_id 透传到 gRPC metadata。
-func ctxWithTrace(c *gin.Context) context.Context {
-	traceID, _ := c.Get("trace_id")
-	idStr, _ := traceID.(string)
-	if idStr == "" {
-		return c.Request.Context()
-	}
-	md := metadata.Pairs("x-trace-id", idStr)
-	return metadata.NewOutgoingContext(c.Request.Context(), md)
-}
-
 // handleWS 处理 WebSocket 升级、在线连接登记与上行转发。
 func (s *HTTPServer) handleWS(c *gin.Context) {
 	traceID, _ := c.Get("trace_id")
-	userIDVal, ok := c.Get("userID")
+	userID, ok := requireUserID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-		return
-	}
-	userID, ok := userIDVal.(uint)
-	if !ok || userID == 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid user id"})
 		return
 	}
 	connID := uuid.NewString()
 	key := fmt.Sprintf("ws:conn:%d", userID)
-	val := fmt.Sprintf("%s:%s", gatewayNodeID, connID)
+	val := fmt.Sprintf("%s:%s", s.nodeID, connID)
 	// 建立连接归属映射：消费端据此判断是否应由本节点执行实时推送。
 	if err := s.redisClient.Set(context.Background(), key, val, 0).Err(); err != nil {
 		log.Printf("[trace=%v] failed to set ws registry for user %d: %v", traceID, userID, err)
@@ -282,8 +202,10 @@ func (s *HTTPServer) handleRegister(c *gin.Context) {
 
 // handleMe 获取当前登录用户信息。
 func (s *HTTPServer) handleMe(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	resp, err := s.userClient.GetByID(ctxWithTrace(c), &pbuser.GetByIDRequest{UserId: uint64(userID)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -294,8 +216,10 @@ func (s *HTTPServer) handleMe(c *gin.Context) {
 
 // handleListConversations 查询会话列表。
 func (s *HTTPServer) handleListConversations(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	resp, err := s.conversationClient.ListConversations(ctxWithTrace(c), &pbconversation.ListConversationsRequest{UserId: uint64(userID)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -318,8 +242,10 @@ func (s *HTTPServer) handleListConversations(c *gin.Context) {
 
 // handleListMessages 查询历史消息和当前未读计数。
 func (s *HTTPServer) handleListMessages(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	withStr := c.Query("with")
 	otherID, err := strconv.ParseUint(withStr, 10, 64)
 	if err != nil || withStr == "" {
@@ -356,8 +282,10 @@ func (s *HTTPServer) handleListMessages(c *gin.Context) {
 // handleConversationRead 发布会话已读事件到 Kafka。
 func (s *HTTPServer) handleConversationRead(c *gin.Context) {
 	traceID, _ := c.Get("trace_id")
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	peerStr := c.Param("peer_id")
 	peer64, err := strconv.ParseUint(peerStr, 10, 64)
 	if err != nil || peer64 == 0 {

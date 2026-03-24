@@ -19,8 +19,10 @@ import (
 
 // handleListFriends 查询好友列表。
 func (s *HTTPServer) handleListFriends(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	resp, err := s.friendClient.ListFriends(ctxWithTrace(c), &pbfriend.ListFriendsRequest{UserId: uint64(userID)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -35,8 +37,10 @@ func (s *HTTPServer) handleListFriends(c *gin.Context) {
 
 // handleSendFriendRequest 发送好友申请。
 func (s *HTTPServer) handleSendFriendRequest(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	fromUserID := userIDVal.(uint)
+	fromUserID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	var req gatewaymodel.SendFriendRequestRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.ToUserID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -57,8 +61,10 @@ func (s *HTTPServer) handleSendFriendRequest(c *gin.Context) {
 }
 
 func (s *HTTPServer) handleApproveFriendRequest(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	operatorUserID := userIDVal.(uint)
+	operatorUserID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	reqID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || reqID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request id"})
@@ -97,8 +103,10 @@ func (s *HTTPServer) handleApproveFriendRequest(c *gin.Context) {
 }
 
 func (s *HTTPServer) handleRejectFriendRequest(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	operatorUserID := userIDVal.(uint)
+	operatorUserID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	reqID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || reqID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request id"})
@@ -137,8 +145,10 @@ func (s *HTTPServer) handleRejectFriendRequest(c *gin.Context) {
 }
 
 func (s *HTTPServer) handleDeleteFriend(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	targetID, err := strconv.ParseUint(c.Param("user_id"), 10, 64)
 	if err != nil || targetID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
@@ -157,8 +167,10 @@ func (s *HTTPServer) handleDeleteFriend(c *gin.Context) {
 }
 
 func (s *HTTPServer) handleListIncomingFriendRequests(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	var q gatewaymodel.ListFriendRequestsQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query"})
@@ -181,8 +193,10 @@ func (s *HTTPServer) handleListIncomingFriendRequests(c *gin.Context) {
 }
 
 func (s *HTTPServer) handleListOutgoingFriendRequests(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	userID := userIDVal.(uint)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	var q gatewaymodel.ListFriendRequestsQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query"})

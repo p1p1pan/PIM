@@ -2,111 +2,160 @@ package mq
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/Shopify/sarama"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"pim/internal/config"
 	"pim/internal/conversation/model"
-	pbgateway "pim/internal/gateway/pb"
 	logmodel "pim/internal/log/model"
 	"pim/internal/mq/kafka"
 
 	conversationservice "pim/internal/conversation/service"
 )
 
-// handleImMessage 处理单聊消息事件：
-// 1) 幂等落库；2) 目标会话未读 +1；3) 目标用户在本节点在线时做实时推送。
-func handleImMessage(ctx context.Context, svc *conversationservice.Service, rdb *redis.Client, pushClient pbgateway.PushServiceClient, producer *kafka.Producer, msg *sarama.ConsumerMessage) error {
-	var km model.KafkaMessage
-	if err := json.Unmarshal(msg.Value, &km); err != nil {
-		emitConsumerLog(producer, logmodel.Log{
-			TS:        time.Now(),
-			Level:     "error",
-			Service:   "conversation",
-			TraceID:   "unknown",
-			Msg:       "im-message decode failed",
-			ErrorCode: "decode_failed",
+// handleImMessage 兼容单条入口，内部复用批处理逻辑。
+func handleImMessage(ctx context.Context, svc *conversationservice.Service, rdb *redis.Client, producer *kafka.Producer, msg *sarama.ConsumerMessage) error {
+	return handleImMessageBatch(ctx, svc, rdb, producer, []*sarama.ConsumerMessage{msg})
+}
+
+// handleImMessageBatch 小批量处理单聊消息：
+// 1) 批量幂等落库（upsert）；2) 仅对新创建消息执行未读+推送。
+func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service, rdb *redis.Client, producer *kafka.Producer, msgs []*sarama.ConsumerMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	kms := make([]model.KafkaMessage, 0, len(msgs))
+	inputs := make([]conversationservice.SendInput, 0, len(msgs))
+	for _, msg := range msgs {
+		km, err := model.DecodeKafkaMessage(msg.Value)
+		if err != nil {
+			emitConsumerLog(producer, logmodel.Log{
+				TS:        time.Now(),
+				Level:     "error",
+				Service:   "conversation",
+				TraceID:   "unknown",
+				Msg:       "im-message decode failed",
+				ErrorCode: "decode_failed",
+			})
+			return err
+		}
+		if km.TraceID == "" {
+			km.TraceID = "unknown"
+		}
+		if km.ClientMsgID == "" {
+			km.ClientMsgID = uuid.NewString()
+		}
+		kms = append(kms, km)
+		inputs = append(inputs, conversationservice.SendInput{
+			FromID:      km.FromUserID,
+			ToID:        km.ToUserID,
+			Content:     km.Content,
+			ClientMsgID: km.ClientMsgID,
 		})
-		return err
 	}
-	traceID := km.TraceID
-	if traceID == "" {
-		traceID = "unknown"
-	}
-	eventID := km.ClientMsgID
-	if eventID == "" {
-		// Defensive fallback for non-standard producers: keep event tracing non-empty.
-		eventID = uuid.NewString()
-	}
-	saved, _, err := svc.SendMessageIdempotent(km.FromUserID, km.ToUserID, km.Content, eventID)
+	saved, created, err := svc.SendMessageIdempotentBatch(inputs)
 	if err != nil {
+		km := kms[0]
 		emitConsumerLog(producer, logmodel.Log{
 			TS:        time.Now(),
 			Level:     "error",
 			Service:   "conversation",
-			TraceID:   traceID,
+			TraceID:   km.TraceID,
 			Msg:       "im-message persist failed",
-			EventID:   eventID,
+			EventID:   km.ClientMsgID,
 			UserID:    uint64(km.FromUserID),
 			ErrorCode: "persist_failed",
 		})
 		return err
 	}
+
+	var pushBatch []model.KafkaMessage
+	for i, km := range kms {
+		if saved[i] == nil {
+			continue
+		}
+		if created[i] {
+			pushBatch = append(pushBatch, km)
+		}
+		if !config.KafkaConversationConsumerVerboseLog {
+			continue
+		}
+		log.Printf("[trace=%s] im-message handled msgID=%d created=%v", km.TraceID, saved[i].ID, created[i])
+		emitConsumerLog(producer, logmodel.Log{
+			Level:          "info",
+			Service:        "conversation",
+			TraceID:        km.TraceID,
+			Msg:            "im-message consumed",
+			EventID:        km.ClientMsgID,
+			UserID:         uint64(km.FromUserID),
+			ConversationID: fmt.Sprintf("%d:%d", minUint(km.FromUserID, km.ToUserID), maxUint(km.FromUserID, km.ToUserID)),
+		})
+	}
+	if len(pushBatch) > 0 {
+		applyRealtimeSideEffectsBatch(ctx, rdb, producer, pushBatch)
+	}
+	return nil
+}
+
+// applyRealtimeSideEffectsBatch 未读计数与 push topic 使用 Pipeline + 批量 SendMessages，降低高 QPS 下 Redis/Kafka 往返。
+func applyRealtimeSideEffectsBatch(ctx context.Context, rdb *redis.Client, producer *kafka.Producer, kms []model.KafkaMessage) {
+	if len(kms) == 0 {
+		return
+	}
 	if rdb != nil {
-		// conversation key 统一按 userID 小->大拼接，避免同一会话出现两套 key。
+		pr := rdb.Pipeline()
+		for i := range kms {
+			km := &kms[i]
+			userA, userB := km.FromUserID, km.ToUserID
+			if userA > userB {
+				userA, userB = userB, userA
+			}
+			convKey := fmt.Sprintf("%d:%d", userA, userB)
+			unreadKey := fmt.Sprintf("msg:unread:%d:%s", km.ToUserID, convKey)
+			_ = pr.Incr(ctx, unreadKey)
+		}
+		_, _ = pr.Exec(ctx)
+	}
+	if producer == nil {
+		return
+	}
+	msgs := make([]*sarama.ProducerMessage, 0, len(kms))
+	for i := range kms {
+		km := &kms[i]
 		userA, userB := km.FromUserID, km.ToUserID
 		if userA > userB {
 			userA, userB = userB, userA
 		}
 		convKey := fmt.Sprintf("%d:%d", userA, userB)
-		unreadKey := fmt.Sprintf("msg:unread:%d:%s", km.ToUserID, convKey)
-		_ = rdb.Incr(ctx, unreadKey).Err()
-
-		// 读取目标用户连接归属，用于判断是否由当前 gateway 节点推送。
-		key := fmt.Sprintf("ws:conn:%d", km.ToUserID)
-		val, err := rdb.Get(ctx, key).Result()
-		if err == nil && val != "" {
-			// 当前约定只对本节点连接执行 PushToConn，避免重复推送。
-			if !strings.HasPrefix(val, "gateway-1:") {
-				return nil
-			}
-			if pushClient != nil {
-				// 推送失败只记告警，不影响消息持久化成功语义。
-				_, pushErr := pushClient.PushToConn(ctx, &pbgateway.PushToConnRequest{
-					FromUserId: uint64(km.FromUserID),
-					ToUserId:   uint64(km.ToUserID),
-					Content:    km.Content,
-				})
-				if pushErr != nil {
-					emitConsumerLog(producer, logmodel.Log{
-						TS:        time.Now(),
-						Level:     "warn",
-						Service:   "conversation",
-						TraceID:   traceID,
-						Msg:       "im-message push failed",
-						EventID:   eventID,
-						UserID:    uint64(km.FromUserID),
-						ErrorCode: "push_failed",
-					})
-				}
-			}
+		data, err := model.EncodeKafkaMessagePB(*km)
+		if err != nil {
+			continue
 		}
+		msgs = append(msgs, &sarama.ProducerMessage{
+			Topic: "im-message-push",
+			Key:   sarama.StringEncoder(convKey),
+			Value: sarama.ByteEncoder(data),
+		})
 	}
-	log.Printf("[trace=%s] im-message handled msgID=%d", traceID, saved.ID)
-	emitConsumerLog(producer, logmodel.Log{
-		Level:          "info",
-		Service:        "conversation",
-		TraceID:        traceID,
-		Msg:            "im-message consumed",
-		EventID:        eventID,
-		UserID:         uint64(km.FromUserID),
-		ConversationID: fmt.Sprintf("%d:%d", minUint(km.FromUserID, km.ToUserID), maxUint(km.FromUserID, km.ToUserID)),
-	})
-	return nil
+	if len(msgs) == 0 {
+		return
+	}
+	if err := producer.SendMessages(ctx, msgs); err != nil {
+		km0 := kms[0]
+		emitConsumerLog(producer, logmodel.Log{
+			TS:        time.Now(),
+			Level:     "warn",
+			Service:   "conversation",
+			TraceID:   km0.TraceID,
+			Msg:       "im-message publish push event batch failed",
+			EventID:   km0.ClientMsgID,
+			UserID:    uint64(km0.FromUserID),
+			ErrorCode: "push_event_publish_failed",
+		})
+	}
 }

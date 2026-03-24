@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package conversation.v1;
+
+option go_package = "pim/internal/conversation/pb;pbconversation";
+
+// IMKafkaMessage 用于 im-message / im-message-push 主题的内部事件载荷。
+message IMKafkaMessage {
+  string trace_id = 1;
+  uint64 from_user_id = 2;
+  uint64 to_user_id = 3;
+  string content = 4;
+  string client_msg_id = 5;
+}

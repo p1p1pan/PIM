@@ -180,6 +180,57 @@ func (s *Service) SaveIncomingGroupMessage(groupID, fromUserID uint, content, ev
 	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID)
 }
 
+// SaveIncomingGroupMessageBatchTrusted 批量落库（同 group）：
+// 入口已做成员校验，这里仅做参数校验 + 批量幂等落库。
+func (s *Service) SaveIncomingGroupMessageBatchTrusted(groupID uint, inputs []repo.SaveGroupMessageInput) ([]model.GroupMessage, error) {
+	if groupID == 0 {
+		return nil, ErrInvalidGroupID
+	}
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	for _, in := range inputs {
+		if in.GroupID != groupID {
+			return nil, ErrInvalidGroupID
+		}
+		if in.FromUserID == 0 {
+			return nil, ErrInvalidUserID
+		}
+		if strings.TrimSpace(in.Content) == "" {
+			return nil, ErrInvalidMessageContent
+		}
+		if len(in.Content) > 4000 {
+			return nil, ErrMessageTooLong
+		}
+		if in.EventID == "" {
+			return nil, ErrInvalidEventID
+		}
+	}
+	return s.repo.SaveGroupMessageIdempotentBatch(inputs)
+}
+
+// SaveIncomingGroupMessageTrusted 用于 Kafka 内部消费链路：
+// 成员校验已在网关入口完成，此处跳过 IsMember 查询，减少每条消息一次 DB 往返。
+func (s *Service) SaveIncomingGroupMessageTrusted(groupID, fromUserID uint, content, eventID string) (*model.GroupMessage, error) {
+	if groupID == 0 {
+		return nil, ErrInvalidGroupID
+	}
+	if fromUserID == 0 {
+		return nil, ErrInvalidUserID
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, ErrInvalidMessageContent
+	}
+	if len(content) > 4000 {
+		return nil, ErrMessageTooLong
+	}
+	if eventID == "" {
+		return nil, ErrInvalidEventID
+	}
+	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID)
+}
+
 // ListMemberUserIDs 查询群成员 user_id 列表（供消息扇出）。
 func (s *Service) ListMemberUserIDs(groupID uint) ([]uint, error) {
 	if groupID == 0 {
@@ -190,6 +241,15 @@ func (s *Service) ListMemberUserIDs(groupID uint) ([]uint, error) {
 			return nil, ErrGroupNotFound
 		}
 		return nil, err
+	}
+	return s.repo.ListMemberUserIDs(groupID)
+}
+
+// ListMemberUserIDsTrusted 供 group-message 内部消费链路使用：
+// 入口已经是 trusted 路径，不再额外查询 groups 表，避免热路径慢 SQL。
+func (s *Service) ListMemberUserIDsTrusted(groupID uint) ([]uint, error) {
+	if groupID == 0 {
+		return nil, ErrInvalidGroupID
 	}
 	return s.repo.ListMemberUserIDs(groupID)
 }

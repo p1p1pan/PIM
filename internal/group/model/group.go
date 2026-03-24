@@ -52,6 +52,15 @@ type GroupPushMessage struct {
 	Seq         uint64 `json:"seq"`
 }
 
+// GroupMemberSyncEvent 用于异步同步 Redis 群成员权威索引。
+type GroupMemberSyncEvent struct {
+	TraceID       string   `json:"trace_id"`
+	Op            string   `json:"op"` // snapshot | add | remove | delete
+	GroupID       uint64   `json:"group_id"`
+	MemberUserIDs []uint64 `json:"member_user_ids,omitempty"`
+	Version       int64    `json:"version,omitempty"`
+}
+
 // GroupReadState 记录用户在群内的已读游标。
 type GroupReadState struct {
 	ID      uint   `gorm:"primaryKey" json:"id"`

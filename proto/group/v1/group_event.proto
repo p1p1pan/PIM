@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package group.v1;
+
+option go_package = "pim/internal/group/pb;pbgroup";
+
+// GroupKafkaMessage 用于 group-message 主题的内部事件载荷。
+message GroupKafkaMessage {
+  string trace_id = 1;
+  string event_id = 2;
+  uint64 group_id = 3;
+  uint64 from_user_id = 4;
+  string content = 5;
+}

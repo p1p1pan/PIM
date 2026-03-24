@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,10 +10,8 @@ import (
 	pbuser "pim/internal/user/pb"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
-	"pim/internal/config"
+	pimdb "pim/internal/db"
 	observemetrics "pim/internal/observability/metrics"
 	userhandler "pim/internal/user/handler"
 	usermodel "pim/internal/user/model"
@@ -24,15 +21,7 @@ import (
 
 func main() {
 	// 1) 初始化 PostgreSQL 与用户表。
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DBHost,
-		config.DBPort,
-		config.DBUser,
-		config.DBPassword,
-		config.DBName,
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}

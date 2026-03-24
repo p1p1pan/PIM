@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"time"
@@ -10,10 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"pim/internal/config"
+	pimdb "pim/internal/db"
 	filehandler "pim/internal/file/handler"
 	filemodel "pim/internal/file/model"
 	filemq "pim/internal/file/mq"
@@ -33,11 +31,7 @@ func main() {
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("file-service"))
 	observemetrics.RegisterMetricsRoute(r)
 	// 1) 连接 PostgreSQL，并在启动时完成 File 相关表迁移。
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DBHost, config.DBPort, config.DBUser, config.DBPassword, config.DBName,
-	)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -59,7 +53,7 @@ func main() {
 
 	// 3) 组装 service 依赖（repo + group/friend 权限检查）。
 	fileRepo := filerepo.NewFileRepo(db)
-	groupConn, err := grpc.NewClient("localhost:9014", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	groupConn, err := grpc.NewClient(config.GroupServiceGRPCTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to group service: %v", err)
 	}
@@ -75,7 +69,7 @@ func main() {
 	friendChecker := fileservice.NewFriendGRPCChecker(friendClient)
 	fileSvc := fileservice.NewService(fileRepo, objectStore, groupChecker, friendChecker)
 	// 4) 初始化 Kafka producer（commit 后投递 file-scan）。
-	producer := kafka.NewProducer(&kafka.ProducerConfig{Brokers: config.KafkaBrokerList})
+	producer := kafka.NewProducer(kafka.DefaultProducerConfig(config.KafkaBrokerList))
 	defer producer.Close()
 
 	// 5) 启动 gRPC 与 HTTP。

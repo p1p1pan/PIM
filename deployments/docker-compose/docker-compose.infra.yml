@@ -52,10 +52,38 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # 双 listener：宿主机进程用 localhost:9092；Docker 内其它容器用 kafka:29092。
+      # 若只 advertised localhost，容器内客户端会先连上 kafka:9092，但元数据返回 localhost，导致在容器内连错机（你看到的 AdminClient WARN）。
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 自动创建 topic 时默认 1 分区会严重限制消费并行；显式建 topic 由 kafka-init 完成。
+      KAFKA_NUM_PARTITIONS: 8
+
+  # 预热 Kafka topic（多分区），避免仅依赖 auto-create 导致 im-message 等只有 1 分区、吞吐上不去。
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pim-kafka-init
+    depends_on:
+      - kafka
+    restart: "no"
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -e
+        until kafka-broker-api-versions --bootstrap-server kafka:29092 >/dev/null 2>&1; do sleep 1; done
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic im-message --partitions 64 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic im-message-push --partitions 64 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic im-message-read --partitions 16 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic log-topic --partitions 16 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic group-message --partitions 64 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic group-member-sync --partitions 16 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic file-scan --partitions 8 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic file-scan-dlq --partitions 2 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --list
 
   minio:
     image: minio/minio:latest

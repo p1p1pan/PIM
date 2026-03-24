@@ -52,3 +52,10 @@ type WSIncomingMessage struct {
 	Content     string `json:"content"`
 	ClientMsgID string `json:"client_msg_id"`
 }
+
+// WSServerAck 是网关对单聊上行的确认（Kafka 入队成功后立即下发；无 from/content，Web 端会忽略）。
+type WSServerAck struct {
+	Type        string `json:"type"` // "ack" | "ack_error"
+	ClientMsgID string `json:"client_msg_id"`
+	Error       string `json:"error,omitempty"`
+}
