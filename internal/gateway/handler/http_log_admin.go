@@ -17,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"pim/internal/config"
 )
 
 type observabilitySnapshot struct {
@@ -28,6 +30,11 @@ type observabilitySnapshot struct {
 	wsDisconnectTotal float64
 }
 
+type metricPoint struct {
+	TS  time.Time
+	Val float64
+}
+
 var (
 	// lastObservabilitySnap 用于计算“本次请求 - 上次请求”的速率快照（qps/rate）。
 	// 这是轻量级近似值，目标是让后台页面看到趋势，不替代 Prometheus rate 计算。
@@ -37,6 +44,8 @@ var (
 	alertStateMu       sync.Mutex
 	lastActiveAlertKey string
 	lastAlertStartedAt time.Time
+	seriesMu           sync.Mutex
+	metricSeriesStore  = map[string][]metricPoint{}
 )
 
 // handleLogsByTrace 查询 trace_id 对应日志。
@@ -303,10 +312,35 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 	metricFamilies := gatherMetricFamilies()
 
 	apiQuality := buildAPIQuality(metricFamilies)
+	apiQuality = mergeAPIQualityWithRouteCatalog(apiQuality, s.apiRouteCatalog)
 	messagePipeline := buildMessagePipeline(metricFamilies)
 	connectRate, disconnectRate := fillRateSnapshots(metricFamilies, apiQuality, messagePipeline)
+	windowDur := parseOverviewWindow(c.Query("window"))
+	appendAPITimeseries(apiQuality)
+	// API 质量表展示窗口聚合值，而非某个瞬时点/全量累计值。
+	applyAPIQualityWindowAggregates(apiQuality, windowDur)
 	sloOverview := buildSLOOverview(apiQuality, messagePipeline, downCount, metricFamilies)
 	alertsOverview := buildAlertsOverview(downCount, messagePipeline, sloOverview)
+	downstreamWriteQuality := buildDownstreamWriteQuality(metricFamilies, messagePipeline)
+	nonAdminErrorRate := computeNonAdminErrorRate(apiQuality)
+	ingressQPS := computeIngressQPS(apiQuality)
+	pushSuccessRate := 0.0
+	if gp, ok := downstreamWriteQuality["gateway_push"].(gin.H); ok {
+		if v, ok2 := gp["success_rate"].(float64); ok2 {
+			pushSuccessRate = v * 100
+		}
+	}
+	kafkaRetryLike := 0.0
+	if kw, ok := downstreamWriteQuality["kafka_write"].(gin.H); ok {
+		if v, ok2 := kw["retry_like_total"].(int64); ok2 {
+			kafkaRetryLike = float64(v)
+		}
+	}
+	appendMetricPoint("ingress_qps", ingressQPS)
+	appendMetricPoint("api_p95_ms", float64(sloOverview["api_p95_now_ms"].(int64)))
+	appendMetricPoint("error_rate", nonAdminErrorRate)
+	appendMetricPoint("push_success_rate", pushSuccessRate)
+	appendMetricPoint("kafka_retry_total", kafkaRetryLike)
 
 	c.JSON(http.StatusOK, gin.H{
 		"service_health":   serviceHealth,
@@ -318,10 +352,256 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 			"connect_rate":       connectRate,
 			"disconnect_rate":    disconnectRate,
 		},
-		"alerts_overview": alertsOverview,
-		"slo_overview":    sloOverview,
-		"generated_at":    time.Now().Format(time.RFC3339),
+		"timeseries": gin.H{
+			"window":      windowDur.String(),
+			"ingress_qps": metricSeriesByWindow("ingress_qps", windowDur),
+			"api_p95_ms":  metricSeriesByWindow("api_p95_ms", windowDur),
+			"error_rate":  metricSeriesByWindow("error_rate", windowDur),
+			"push_success_rate": metricSeriesByWindow("push_success_rate", windowDur),
+			"kafka_retry_total": metricSeriesByWindow("kafka_retry_total", windowDur),
+			"api_domain":        metricSeriesByPrefixWindow("api_domain|", windowDur),
+			"api_route":         metricSeriesByPrefixWindow("api_route|", windowDur),
+		},
+		"downstream_write_quality": downstreamWriteQuality,
+		"alerts_overview":          alertsOverview,
+		"slo_overview":             sloOverview,
+		"generated_at":             time.Now().Format(time.RFC3339),
 	})
+}
+
+func computeIngressQPS(apiQuality []gin.H) float64 {
+	total := 0.0
+	for _, item := range apiQuality {
+		route, _ := item["route"].(string)
+		if strings.HasPrefix(route, "/api/v1/admin/") {
+			continue
+		}
+		if v, ok := item["qps"].(float64); ok {
+			total += v
+		}
+	}
+	return math.Round(total*1000) / 1000
+}
+
+func computeNonAdminErrorRate(apiQuality []gin.H) float64 {
+	sum := 0.0
+	count := 0.0
+	for _, item := range apiQuality {
+		route, _ := item["route"].(string)
+		if strings.HasPrefix(route, "/api/v1/admin/") {
+			continue
+		}
+		if v, ok := item["error_rate"].(float64); ok {
+			sum += v
+			count++
+		}
+	}
+	if count <= 0 {
+		return 0
+	}
+	return math.Round((sum/count)*100000) / 100000
+}
+
+func parseOverviewWindow(v string) time.Duration {
+	switch strings.TrimSpace(v) {
+	case "5m":
+		return 5 * time.Minute
+	case "1h":
+		return time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	default:
+		return 15 * time.Minute
+	}
+}
+
+func appendMetricPoint(name string, val float64) {
+	now := time.Now()
+	seriesMu.Lock()
+	defer seriesMu.Unlock()
+	list := metricSeriesStore[name]
+	list = append(list, metricPoint{TS: now, Val: val})
+	// Keep roughly latest 24h with 5-10s polling headroom.
+	if len(list) > 20000 {
+		list = list[len(list)-20000:]
+	}
+	metricSeriesStore[name] = list
+}
+
+func metricSeriesByWindow(name string, d time.Duration) []gin.H {
+	seriesMu.Lock()
+	list := append([]metricPoint(nil), metricSeriesStore[name]...)
+	seriesMu.Unlock()
+	if len(list) == 0 {
+		return []gin.H{}
+	}
+	cutoff := time.Now().Add(-d)
+	out := make([]gin.H, 0, len(list))
+	for _, p := range list {
+		if p.TS.Before(cutoff) {
+			continue
+		}
+		out = append(out, gin.H{
+			"ts":  p.TS.Format(time.RFC3339),
+			"val": math.Round(p.Val*1000) / 1000,
+		})
+	}
+	return out
+}
+
+func metricSeriesByPrefixWindow(prefix string, d time.Duration) gin.H {
+	seriesMu.Lock()
+	storeCopy := map[string][]metricPoint{}
+	for k, v := range metricSeriesStore {
+		if strings.HasPrefix(k, prefix) {
+			storeCopy[k] = append([]metricPoint(nil), v...)
+		}
+	}
+	seriesMu.Unlock()
+	cutoff := time.Now().Add(-d)
+	out := gin.H{}
+	for key, list := range storeCopy {
+		rest := strings.TrimPrefix(key, prefix)
+		parts := strings.SplitN(rest, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		entity := parts[0]
+		metric := parts[1]
+		item, ok := out[entity].(gin.H)
+		if !ok {
+			item = gin.H{}
+			out[entity] = item
+		}
+		pts := make([]gin.H, 0, len(list))
+		for _, p := range list {
+			if p.TS.Before(cutoff) {
+				continue
+			}
+			pts = append(pts, gin.H{
+				"ts":  p.TS.Format(time.RFC3339),
+				"val": math.Round(p.Val*1000) / 1000,
+			})
+		}
+		item[metric] = pts
+	}
+	return out
+}
+
+func appendAPITimeseries(apiQuality []gin.H) {
+	type agg struct {
+		qpsSum   float64
+		errSum   float64
+		errCount float64
+		p95Sum   float64
+		p95Count float64
+	}
+	byDomain := map[string]*agg{}
+	for _, item := range apiQuality {
+		route := strings.TrimSpace(fmt.Sprint(item["route"]))
+		if route == "" {
+			continue
+		}
+		qps := toFloat64(item["qps"])
+		errRate := toFloat64(item["error_rate"])
+		p95 := toFloat64(item["p95_latency_ms"])
+
+		appendMetricPoint(fmt.Sprintf("api_route|%s|qps", route), qps)
+		appendMetricPoint(fmt.Sprintf("api_route|%s|error_rate", route), errRate)
+		appendMetricPoint(fmt.Sprintf("api_route|%s|p95_ms", route), p95)
+
+		domain := routeDomain(route)
+		a := byDomain[domain]
+		if a == nil {
+			a = &agg{}
+			byDomain[domain] = a
+		}
+		a.qpsSum += qps
+		a.errSum += errRate
+		a.errCount++
+		if p95 > 0 {
+			a.p95Sum += p95
+			a.p95Count++
+		}
+	}
+	for domain, a := range byDomain {
+		avgErr := 0.0
+		if a.errCount > 0 {
+			avgErr = a.errSum / a.errCount
+		}
+		avgP95 := 0.0
+		if a.p95Count > 0 {
+			avgP95 = a.p95Sum / a.p95Count
+		}
+		appendMetricPoint(fmt.Sprintf("api_domain|%s|qps", domain), a.qpsSum)
+		appendMetricPoint(fmt.Sprintf("api_domain|%s|error_rate", domain), avgErr)
+		appendMetricPoint(fmt.Sprintf("api_domain|%s|p95_ms", domain), avgP95)
+	}
+}
+
+func applyAPIQualityWindowAggregates(apiQuality []gin.H, d time.Duration) {
+	for _, item := range apiQuality {
+		route := strings.TrimSpace(fmt.Sprint(item["route"]))
+		if route == "" {
+			continue
+		}
+		if avg, ok := metricWindowAverageByKey(fmt.Sprintf("api_route|%s|qps", route), d); ok {
+			item["qps"] = math.Round(avg*1000) / 1000
+		}
+		if avg, ok := metricWindowAverageByKey(fmt.Sprintf("api_route|%s|error_rate", route), d); ok {
+			item["error_rate"] = math.Round(avg*100000) / 100000
+		}
+		if avg, ok := metricWindowAverageByKey(fmt.Sprintf("api_route|%s|p95_ms", route), d); ok {
+			item["p95_latency_ms"] = int64(math.Round(avg))
+		}
+	}
+}
+
+func metricWindowAverageByKey(name string, d time.Duration) (float64, bool) {
+	seriesMu.Lock()
+	list := append([]metricPoint(nil), metricSeriesStore[name]...)
+	seriesMu.Unlock()
+	if len(list) == 0 {
+		return 0, false
+	}
+	cutoff := time.Now().Add(-d)
+	sum := 0.0
+	count := 0.0
+	for _, p := range list {
+		if p.TS.Before(cutoff) {
+			continue
+		}
+		sum += p.Val
+		count++
+	}
+	if count <= 0 {
+		return 0, false
+	}
+	return sum / count, true
+}
+
+func toFloat64(v interface{}) float64 {
+	switch t := v.(type) {
+	case float64:
+		return t
+	case float32:
+		return float64(t)
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	case uint:
+		return float64(t)
+	case uint64:
+		return float64(t)
+	case json.Number:
+		f, _ := t.Float64()
+		return f
+	default:
+		return 0
+	}
 }
 
 func (s *HTTPServer) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
@@ -331,11 +611,11 @@ func (s *HTTPServer) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
 	}
 	targets := []svc{
 		{ID: "gateway", URL: "self"},
-		{ID: "auth", URL: "http://localhost:9000/health"},
-		{ID: "user", URL: "http://localhost:9001/health"},
-		{ID: "friend", URL: "http://localhost:9002/health"},
-		{ID: "conversation", URL: "http://localhost:9003/health"},
-		{ID: "group", URL: "http://localhost:9004/health"},
+		{ID: "auth", URL: config.AdminHealthAuthURL},
+		{ID: "user", URL: config.AdminHealthUserURL},
+		{ID: "friend", URL: config.AdminHealthFriendURL},
+		{ID: "conversation", URL: config.AdminHealthConversationURL},
+		{ID: "group", URL: config.AdminHealthGroupURL},
 		{ID: "file", URL: s.fileServiceBaseURL + "/health"},
 		{ID: "log", URL: s.logServiceBaseURL + "/health"},
 	}
@@ -433,12 +713,62 @@ func buildAPIQuality(mfs map[string]*dto.MetricFamily) []gin.H {
 		out = append(out, gin.H{
 			"service":        k.service,
 			"route":          k.route,
-			"qps":            0, // stable contract; actual rate is computed in Prometheus/Grafana.
+			"qps":            0, // filled by fillRateSnapshots.
 			"error_rate":     errorRate,
-			"p95_latency_ms": 0,
+			"p95_latency_ms": estimateHTTPRouteP95MS(mfs, k.route),
 		})
 	}
 	return out
+}
+
+func mergeAPIQualityWithRouteCatalog(observed []gin.H, catalog []string) []gin.H {
+	if len(catalog) == 0 {
+		return observed
+	}
+	byRoute := make(map[string]gin.H, len(observed))
+	for _, it := range observed {
+		route := strings.TrimSpace(fmt.Sprint(it["route"]))
+		if route == "" {
+			continue
+		}
+		byRoute[route] = it
+	}
+	merged := make([]gin.H, 0, len(catalog))
+	for _, route := range catalog {
+		if it, ok := byRoute[route]; ok {
+			merged = append(merged, it)
+			continue
+		}
+		merged = append(merged, gin.H{
+			"service":        "gateway",
+			"route":          route,
+			"qps":            0,
+			"error_rate":     0,
+			"p95_latency_ms": 0,
+		})
+	}
+	return merged
+}
+
+func routeDomain(route string) string {
+	switch {
+	case strings.HasPrefix(route, "/api/v1/friends"):
+		return "friend-service"
+	case strings.HasPrefix(route, "/api/v1/groups"):
+		return "group-service"
+	case strings.HasPrefix(route, "/api/v1/conversations"), strings.HasPrefix(route, "/api/v1/messages"):
+		return "conversation-service"
+	case strings.HasPrefix(route, "/api/v1/files"):
+		return "file-service"
+	case strings.HasPrefix(route, "/api/v1/logs"):
+		return "log-service"
+	case strings.HasPrefix(route, "/api/v1/admin"):
+		return "gateway-admin"
+	case route == "/api/v1/login" || route == "/api/v1/register" || route == "/api/v1/me":
+		return "auth-user"
+	default:
+		return "gateway-other"
+	}
 }
 
 func buildMessagePipeline(mfs map[string]*dto.MetricFamily) []gin.H {
@@ -680,9 +1010,16 @@ func fillRateSnapshots(mfs map[string]*dto.MetricFamily, apiQuality, messagePipe
 	for _, item := range apiQuality {
 		service, _ := item["service"].(string)
 		route, _ := item["route"].(string)
-		k := service + "|" + route
-		cur := current.apiTotals[k]
-		prevVal := prev.apiTotals[k]
+		k := apiSnapshotKey(service, route)
+		cur, okCur := current.apiTotals[k]
+		prevVal, okPrev := prev.apiTotals[k]
+		// Some metric streams may miss "service" label. Fallback to route-level key.
+		if !okCur {
+			cur = current.apiTotals[apiSnapshotKey("", route)]
+		}
+		if !okPrev {
+			prevVal = prev.apiTotals[apiSnapshotKey("", route)]
+		}
 		delta := cur - prevVal
 		if delta < 0 {
 			delta = 0
@@ -731,13 +1068,78 @@ func buildAPITotalSnapshots(mfs map[string]*dto.MetricFamily) map[string]float64
 	for _, metric := range mf.Metric {
 		service := labelValue(metric, "service")
 		route := labelValue(metric, "route")
-		if service == "" || route == "" {
+		if route == "" {
 			continue
 		}
-		k := service + "|" + route
+		k := apiSnapshotKey(service, route)
 		out[k] += metric.GetCounter().GetValue()
 	}
 	return out
+}
+
+func apiSnapshotKey(service, route string) string {
+	route = strings.TrimSpace(route)
+	service = strings.TrimSpace(service)
+	if service == "" {
+		return "|" + route
+	}
+	return service + "|" + route
+}
+
+func estimateHTTPRouteP95MS(mfs map[string]*dto.MetricFamily, route string) int64 {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return 0
+	}
+	mf := mfs["pim_http_request_duration_seconds"]
+	if mf == nil {
+		return 0
+	}
+	byLE := map[float64]float64{}
+	for _, metric := range mf.Metric {
+		if labelValue(metric, "route") != route {
+			continue
+		}
+		h := metric.GetHistogram()
+		if h == nil {
+			continue
+		}
+		for _, b := range h.GetBucket() {
+			byLE[b.GetUpperBound()] += float64(b.GetCumulativeCount())
+		}
+	}
+	if len(byLE) == 0 {
+		return 0
+	}
+	les := make([]float64, 0, len(byLE))
+	for le := range byLE {
+		les = append(les, le)
+	}
+	sort.Float64s(les)
+	total := byLE[les[len(les)-1]]
+	if total <= 0 {
+		return 0
+	}
+	target := total * 0.95
+	prevCount := 0.0
+	prevLE := 0.0
+	for _, le := range les {
+		cur := byLE[le]
+		if cur >= target {
+			if le == prevLE || cur <= prevCount {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / (cur - prevCount)
+			v := prevLE + ratio*(le-prevLE)
+			if v < 0 {
+				v = 0
+			}
+			return int64(math.Round(v * 1000))
+		}
+		prevCount = cur
+		prevLE = le
+	}
+	return int64(math.Round(les[len(les)-1] * 1000))
 }
 
 func metricCounter(mfs map[string]*dto.MetricFamily, name string) float64 {
@@ -875,6 +1277,147 @@ func estimateMessageE2EP95MS(messagePipeline []gin.H) int64 {
 		}
 	}
 	return maxP95
+}
+
+func buildDownstreamWriteQuality(mfs map[string]*dto.MetricFamily, messagePipeline []gin.H) gin.H {
+	produceTotal := int64(0)
+	consumeTotal := int64(0)
+	retryLikeTotal := int64(0)
+	dlqTotal := int64(0)
+	maxHandlerP95 := int64(0)
+	for _, item := range messagePipeline {
+		if v, ok := item["produce_total"].(int64); ok {
+			produceTotal += v
+		}
+		if v, ok := item["consume_total"].(int64); ok {
+			consumeTotal += v
+		}
+		if v, ok := item["retry_count"].(int64); ok {
+			retryLikeTotal += v
+		}
+		if v, ok := item["dlq_count"].(int64); ok {
+			dlqTotal += v
+		}
+		if v, ok := item["e2e_p95_ms"].(int64); ok && v > maxHandlerP95 {
+			maxHandlerP95 = v
+		}
+	}
+
+	pushOk := int64(metricCounterByLabel(mfs, "pim_gateway_push_total", "result", "ok"))
+	pushFail := int64(metricCounterExcludeLabelValue(mfs, "pim_gateway_push_total", "result", "ok"))
+	pushRate := 1.0
+	if pushOk+pushFail > 0 {
+		pushRate = float64(pushOk) / float64(pushOk+pushFail)
+	}
+
+	return gin.H{
+		"gateway_ingress": gin.H{
+			"dispatch_p95_ms":      estimateHistogramP95MSByLabels(mfs, "pim_group_ingress_stage_duration_seconds", map[string]string{"stage": "dispatch", "result": "ok"}),
+			"member_check_p95_ms":  estimateHistogramP95MSByLabels(mfs, "pim_group_member_check_stage_duration_seconds", map[string]string{"stage": "total", "result": "ok"}),
+			"ingress_total_p95_ms": estimateHistogramP95MSByLabels(mfs, "pim_group_ingress_stage_duration_seconds", map[string]string{"stage": "total", "result": "ok"}),
+		},
+		"kafka_write": gin.H{
+			"produce_total":   produceTotal,
+			"consume_total":   consumeTotal,
+			"retry_like_total": retryLikeTotal,
+			"dlq_total":       dlqTotal,
+			"handler_p95_ms":  maxHandlerP95,
+		},
+		"gateway_push": gin.H{
+			"ok_total":      pushOk,
+			"fail_total":    pushFail,
+			"success_rate":  math.Round(pushRate*10000) / 10000,
+			"delivery_p95_ms": estimateHistogramP95MSByLabels(mfs, "pim_kafka_handler_duration_seconds", map[string]string{"topic": "im-message-push", "result": "ok"}),
+		},
+	}
+}
+
+func metricCounterByLabel(mfs map[string]*dto.MetricFamily, metricName, label, value string) float64 {
+	mf := mfs[metricName]
+	if mf == nil {
+		return 0
+	}
+	total := 0.0
+	for _, m := range mf.Metric {
+		if labelValue(m, label) == value {
+			total += m.GetCounter().GetValue()
+		}
+	}
+	return total
+}
+
+func metricCounterExcludeLabelValue(mfs map[string]*dto.MetricFamily, metricName, label, excluded string) float64 {
+	mf := mfs[metricName]
+	if mf == nil {
+		return 0
+	}
+	total := 0.0
+	for _, m := range mf.Metric {
+		if labelValue(m, label) == excluded {
+			continue
+		}
+		total += m.GetCounter().GetValue()
+	}
+	return total
+}
+
+func estimateHistogramP95MSByLabels(mfs map[string]*dto.MetricFamily, metricName string, labels map[string]string) int64 {
+	mf := mfs[metricName]
+	if mf == nil {
+		return 0
+	}
+	byLE := map[float64]float64{}
+	for _, metric := range mf.Metric {
+		matched := true
+		for k, want := range labels {
+			if labelValue(metric, k) != want {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		h := metric.GetHistogram()
+		if h == nil {
+			continue
+		}
+		for _, b := range h.GetBucket() {
+			byLE[b.GetUpperBound()] += float64(b.GetCumulativeCount())
+		}
+	}
+	if len(byLE) == 0 {
+		return 0
+	}
+	les := make([]float64, 0, len(byLE))
+	for le := range byLE {
+		les = append(les, le)
+	}
+	sort.Float64s(les)
+	total := byLE[les[len(les)-1]]
+	if total <= 0 {
+		return 0
+	}
+	target := total * 0.95
+	prevCount := 0.0
+	prevLE := 0.0
+	for _, le := range les {
+		cur := byLE[le]
+		if cur >= target {
+			if le == prevLE || cur <= prevCount {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / (cur - prevCount)
+			v := prevLE + ratio*(le-prevLE)
+			if v < 0 {
+				v = 0
+			}
+			return int64(math.Round(v * 1000))
+		}
+		prevCount = cur
+		prevLE = le
+	}
+	return int64(math.Round(les[len(les)-1] * 1000))
 }
 
 func stableAlertStartedAt(activeCount int, severity, source string) string {

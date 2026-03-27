@@ -1,0 +1,41 @@
+# 可选：集群已安装 Ingress Controller 时使用（例如 nginx、traefik）。
+# 将 pim.example.com 改成你的域名，或配合 hosts 做本地解析。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pim-gateway
+  namespace: pim
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pim.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8088

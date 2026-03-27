@@ -1,6 +1,29 @@
-const API_BASE = "http://localhost:8080";
+function resolveAPIBase() {
+  const fromWindow = String(window.PIM_API_BASE || "").trim();
+  if (fromWindow) return fromWindow.replace(/\/$/, "");
+  // For pages served by nginx/frontend service, use same-origin so /api is proxied in-cluster.
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return "";
+  }
+  // For file:// local open, keep explicit localhost gateway fallback.
+  return "http://localhost:8080";
+}
+
+const API_BASE = resolveAPIBase();
 const AUTH_KEY = "pim_auth_session";
 const TRACE_HISTORY_KEY = "pim_trace_history";
+
+function resolveWSBase() {
+  const fromWindow = String(window.PIM_WS_BASE || "").trim();
+  if (fromWindow) return fromWindow.replace(/\/$/, "");
+  if (API_BASE) {
+    return API_BASE.replace(/^http:\/\//i, "ws://").replace(/^https:\/\//i, "wss://");
+  }
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}`;
+}
+
+const WS_BASE = resolveWSBase();
 
 // 保存当前会话认证信息。使用 sessionStorage 以隔离不同浏览器标签页登录态。
 function saveAuth(token, user) {

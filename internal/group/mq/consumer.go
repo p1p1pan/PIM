@@ -18,7 +18,7 @@ import (
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
 // StartConsumers 启动 group-message 消费者。

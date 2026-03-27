@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -14,12 +17,73 @@ type service struct {
 	Cmd  *exec.Cmd
 }
 
-func newGoRunService(name, path string) *service {
+func mergeEnv(base []string, extra map[string]string) []string {
+	merged := map[string]string{}
+	for _, kv := range base {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		merged[parts[0]] = parts[1]
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	out := make([]string, 0, len(merged))
+	for k, v := range merged {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+func getenvOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+func tryLoadEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.Index(line, "=")
+		if idx <= 0 {
+			continue
+		}
+		k := strings.TrimSpace(line[:idx])
+		v := strings.TrimSpace(line[idx+1:])
+		if k == "" {
+			continue
+		}
+		// Respect explicitly exported env from current shell.
+		if os.Getenv(k) == "" {
+			_ = os.Setenv(k, v)
+		}
+	}
+}
+
+func loadEnvForAll() {
+	// Prefer repo-level .env, fallback to deployments template location.
+	tryLoadEnvFile(".env")
+	tryLoadEnvFile(filepath.Join("deployments", "docker-compose", ".env"))
+}
+
+func newGoRunService(name, path string, extraEnv map[string]string) *service {
 	// path 是子服务的 cmd 目录，比如 ./cmd/auth-service
 	cmd := exec.Command("go", "run", path)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = mergeEnv(os.Environ(), extraEnv)
 	return &service{
 		Name: name,
 		Cmd:  cmd,
@@ -27,13 +91,123 @@ func newGoRunService(name, path string) *service {
 }
 
 func main() {
+	loadEnvForAll()
+
 	// 1) 统一拉起核心服务，便于本地联调（等价于多开终端 go run）。
+	// 本地多实例编排：
+	// - user/auth/gateway: 双实例
+	// - conversation/group: 三实例
+	// - friend: 单实例
+	// - gateway 两实例分别路由到不同 auth/conversation/group 实例，便于压测分流
+	pushTargets := getenvOr("GATEWAY_PUSH_GRPC_TARGETS", "gateway-1=localhost:8090,gateway-2=localhost:8190")
+	user1GRPC := getenvOr("USER1_GRPC_ADDR", ":9011")
+	user2GRPC := getenvOr("USER2_GRPC_ADDR", ":9111")
+	auth1GRPC := getenvOr("AUTH1_GRPC_ADDR", ":9005")
+	auth2GRPC := getenvOr("AUTH2_GRPC_ADDR", ":9105")
+	conv1GRPC := getenvOr("CONVERSATION1_GRPC_ADDR", ":9013")
+	conv2GRPC := getenvOr("CONVERSATION2_GRPC_ADDR", ":9113")
+	conv3GRPC := getenvOr("CONVERSATION3_GRPC_ADDR", ":9213")
+	group1GRPC := getenvOr("GROUP1_GRPC_ADDR", ":9014")
+	group2GRPC := getenvOr("GROUP2_GRPC_ADDR", ":9114")
+	group3GRPC := getenvOr("GROUP3_GRPC_ADDR", ":9214")
+
 	services := []*service{
-		newGoRunService("auth-service", "./cmd/auth-service"),
-		newGoRunService("user-service", "./cmd/user-service"),
-		newGoRunService("friend-service", "./cmd/friend-service"),
-		newGoRunService("conversation-service", "./cmd/conversation-service"),
-		newGoRunService("gateway", "./cmd/gateway"),
+		newGoRunService("user-service-1", "./cmd/user-service", map[string]string{
+			"USER_HTTP_ADDR":                 getenvOr("USER1_HTTP_ADDR", ":9001"),
+			"USER_GRPC_ADDR":                 user1GRPC,
+			"POSTGRES_MAX_OPEN_CONNS":        getenvOr("USER_POSTGRES_MAX_OPEN_CONNS", "16"),
+			"POSTGRES_MAX_IDLE_CONNS":        getenvOr("USER_POSTGRES_MAX_IDLE_CONNS", "8"),
+			"POSTGRES_CONN_MAX_LIFETIME_SEC": getenvOr("POSTGRES_CONN_MAX_LIFETIME_SEC", "300"),
+			"POSTGRES_CONN_MAX_IDLE_TIME_SEC": getenvOr("POSTGRES_CONN_MAX_IDLE_TIME_SEC", "120"),
+		}),
+		newGoRunService("user-service-2", "./cmd/user-service", map[string]string{
+			"USER_HTTP_ADDR":                 getenvOr("USER2_HTTP_ADDR", ":9101"),
+			"USER_GRPC_ADDR":                 user2GRPC,
+			"POSTGRES_MAX_OPEN_CONNS":        getenvOr("USER_POSTGRES_MAX_OPEN_CONNS", "16"),
+			"POSTGRES_MAX_IDLE_CONNS":        getenvOr("USER_POSTGRES_MAX_IDLE_CONNS", "8"),
+			"POSTGRES_CONN_MAX_LIFETIME_SEC": getenvOr("POSTGRES_CONN_MAX_LIFETIME_SEC", "300"),
+			"POSTGRES_CONN_MAX_IDLE_TIME_SEC": getenvOr("POSTGRES_CONN_MAX_IDLE_TIME_SEC", "120"),
+		}),
+		newGoRunService("auth-service-1", "./cmd/auth-service", map[string]string{
+			"AUTH_HTTP_ADDR":            getenvOr("AUTH1_HTTP_ADDR", ":9000"),
+			"AUTH_GRPC_ADDR":            auth1GRPC,
+			"USER_SERVICE_GRPC_TARGET":  getenvOr("AUTH1_USER_SERVICE_GRPC_TARGET", "localhost"+user1GRPC),
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("AUTH_POSTGRES_MAX_OPEN_CONNS", "16"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("AUTH_POSTGRES_MAX_IDLE_CONNS", "8"),
+		}),
+		newGoRunService("auth-service-2", "./cmd/auth-service", map[string]string{
+			"AUTH_HTTP_ADDR":            getenvOr("AUTH2_HTTP_ADDR", ":9100"),
+			"AUTH_GRPC_ADDR":            auth2GRPC,
+			"USER_SERVICE_GRPC_TARGET":  getenvOr("AUTH2_USER_SERVICE_GRPC_TARGET", "localhost"+user2GRPC),
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("AUTH_POSTGRES_MAX_OPEN_CONNS", "16"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("AUTH_POSTGRES_MAX_IDLE_CONNS", "8"),
+		}),
+		newGoRunService("friend-service-1", "./cmd/friend-service", map[string]string{
+			"POSTGRES_MAX_OPEN_CONNS": getenvOr("FRIEND_POSTGRES_MAX_OPEN_CONNS", "4"),
+			"POSTGRES_MAX_IDLE_CONNS": getenvOr("FRIEND_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("conversation-service-1", "./cmd/conversation-service", map[string]string{
+			"CONVERSATION_HTTP_ADDR":    getenvOr("CONVERSATION1_HTTP_ADDR", ":9003"),
+			"CONVERSATION_GRPC_ADDR":    conv1GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("conversation-service-2", "./cmd/conversation-service", map[string]string{
+			"CONVERSATION_HTTP_ADDR":    getenvOr("CONVERSATION2_HTTP_ADDR", ":9103"),
+			"CONVERSATION_GRPC_ADDR":    conv2GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("conversation-service-3", "./cmd/conversation-service", map[string]string{
+			"CONVERSATION_HTTP_ADDR":    getenvOr("CONVERSATION3_HTTP_ADDR", ":9203"),
+			"CONVERSATION_GRPC_ADDR":    conv3GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("CONVERSATION_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("group-service-1", "./cmd/group-service", map[string]string{
+			"GROUP_HTTP_ADDR":           getenvOr("GROUP1_HTTP_ADDR", ":9004"),
+			"GROUP_GRPC_ADDR":           group1GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("GROUP_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("GROUP_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("group-service-2", "./cmd/group-service", map[string]string{
+			"GROUP_HTTP_ADDR":           getenvOr("GROUP2_HTTP_ADDR", ":9104"),
+			"GROUP_GRPC_ADDR":           group2GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("GROUP_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("GROUP_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("group-service-3", "./cmd/group-service", map[string]string{
+			"GROUP_HTTP_ADDR":           getenvOr("GROUP3_HTTP_ADDR", ":9204"),
+			"GROUP_GRPC_ADDR":           group3GRPC,
+			"GATEWAY_PUSH_GRPC_TARGETS": pushTargets,
+			"POSTGRES_MAX_OPEN_CONNS":   getenvOr("GROUP_POSTGRES_MAX_OPEN_CONNS", "3"),
+			"POSTGRES_MAX_IDLE_CONNS":   getenvOr("GROUP_POSTGRES_MAX_IDLE_CONNS", "2"),
+		}),
+		newGoRunService("gateway-1", "./cmd/gateway", map[string]string{
+			"GATEWAY_HTTP_ADDR":                getenvOr("GATEWAY1_HTTP_ADDR", ":8080"),
+			"GATEWAY_PUSH_GRPC_ADDR":           getenvOr("GATEWAY1_PUSH_GRPC_ADDR", ":8090"),
+			"GATEWAY_NODE_ID":                  getenvOr("GATEWAY1_NODE_ID", "gateway-1"),
+			"AUTH_SERVICE_GRPC_TARGET":         getenvOr("GATEWAY1_AUTH_SERVICE_GRPC_TARGET", "localhost"+auth1GRPC),
+			"USER_SERVICE_GRPC_TARGET":         getenvOr("GATEWAY1_USER_SERVICE_GRPC_TARGET", "localhost"+user1GRPC),
+			"FRIEND_SERVICE_GRPC_TARGET":       getenvOr("GATEWAY1_FRIEND_SERVICE_GRPC_TARGET", "localhost:9012"),
+			"CONVERSATION_SERVICE_GRPC_TARGET": getenvOr("GATEWAY1_CONVERSATION_SERVICE_GRPC_TARGET", "localhost"+conv1GRPC),
+			"GROUP_SERVICE_GRPC_TARGET":        getenvOr("GATEWAY1_GROUP_SERVICE_GRPC_TARGET", "localhost"+group1GRPC),
+		}),
+		newGoRunService("gateway-2", "./cmd/gateway", map[string]string{
+			"GATEWAY_HTTP_ADDR":                getenvOr("GATEWAY2_HTTP_ADDR", ":8180"),
+			"GATEWAY_PUSH_GRPC_ADDR":           getenvOr("GATEWAY2_PUSH_GRPC_ADDR", ":8190"),
+			"GATEWAY_NODE_ID":                  getenvOr("GATEWAY2_NODE_ID", "gateway-2"),
+			"AUTH_SERVICE_GRPC_TARGET":         getenvOr("GATEWAY2_AUTH_SERVICE_GRPC_TARGET", "localhost"+auth2GRPC),
+			"USER_SERVICE_GRPC_TARGET":         getenvOr("GATEWAY2_USER_SERVICE_GRPC_TARGET", "localhost"+user2GRPC),
+			"FRIEND_SERVICE_GRPC_TARGET":       getenvOr("GATEWAY2_FRIEND_SERVICE_GRPC_TARGET", "localhost:9012"),
+			"CONVERSATION_SERVICE_GRPC_TARGET": getenvOr("GATEWAY2_CONVERSATION_SERVICE_GRPC_TARGET", "localhost"+conv3GRPC),
+			"GROUP_SERVICE_GRPC_TARGET":        getenvOr("GATEWAY2_GROUP_SERVICE_GRPC_TARGET", "localhost"+group3GRPC),
+		}),
 	}
 
 	// 2) 启动所有子服务；任何一个启动失败直接退出，避免半可用状态。

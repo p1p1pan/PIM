@@ -14,11 +14,12 @@ var (
 	DBPassword = getenv("POSTGRES_PASSWORD", "pim")
 	DBName     = getenv("POSTGRES_DB", "pim")
 
-	// PostgreSQL 连接池（按进程）。多服务同时连同一库时，各进程 MaxOpen 之和应 < PostgreSQL max_connections。
-	DBMaxOpenConns       = getenvInt("POSTGRES_MAX_OPEN_CONNS", 15)
-	DBMaxIdleConns       = getenvInt("POSTGRES_MAX_IDLE_CONNS", 8)
+	// PostgreSQL 连接池（按进程）。默认值按“本地压测”提升一档，降低登录高并发下排队。
+	// 多服务同时连同一库时，各进程 MaxOpen 之和应 < PostgreSQL max_connections。
+	DBMaxOpenConns       = getenvInt("POSTGRES_MAX_OPEN_CONNS", 80)
+	DBMaxIdleConns       = getenvInt("POSTGRES_MAX_IDLE_CONNS", 40)
 	DBConnMaxLifetimeSec = getenvInt("POSTGRES_CONN_MAX_LIFETIME_SEC", 300) // 0 表示不限制生命周期
-	DBConnMaxIdleTimeSec = getenvInt("POSTGRES_CONN_MAX_IDLE_TIME_SEC", 90) // 0 表示不限制空闲时间
+	DBConnMaxIdleTimeSec = getenvInt("POSTGRES_CONN_MAX_IDLE_TIME_SEC", 120) // 0 表示不限制空闲时间
 
 	JWTSecret = getenv("JWT_SECRET", "pim-dev-secret") // JWT 签名密钥
 
@@ -111,6 +112,10 @@ var (
 	ElasticsearchURL       = getenv("ELASTICSEARCH_URL", "http://localhost:9200")
 	LogServiceHTTPURL      = getenv("LOG_SERVICE_HTTP_URL", "http://localhost:9016")
 	FileServiceHTTPURL     = getenv("FILE_SERVICE_HTTP_URL", "http://localhost:9006")
+	AuthHTTPAddr           = getenv("AUTH_HTTP_ADDR", ":9000")
+	AuthGRPCAddr           = getenv("AUTH_GRPC_ADDR", ":9005")
+	UserHTTPAddr           = getenv("USER_HTTP_ADDR", ":9001")
+	UserGRPCAddr           = getenv("USER_GRPC_ADDR", ":9011")
 	GatewayHTTPAddr        = getenv("GATEWAY_HTTP_ADDR", ":8080")
 	GatewayPushGRPCAddr    = getenv("GATEWAY_PUSH_GRPC_ADDR", ":8090")
 	GatewayNodeID          = getenv("GATEWAY_NODE_ID", "gateway-1")
@@ -122,6 +127,18 @@ var (
 	GatewayPushGRPCTarget  = getenv("GATEWAY_PUSH_GRPC_TARGET", "localhost:8090")
 	// 多 gateway PushService 目标映射，格式：gateway-1=localhost:8090,gateway-2=localhost:8091
 	GatewayPushGRPCTargets = getenv("GATEWAY_PUSH_GRPC_TARGETS", "")
+	// 下游 gRPC 地址（Kubernetes 内用 Service DNS，例如 user-service:9011）。
+	AuthServiceGRPCTarget          = getenv("AUTH_SERVICE_GRPC_TARGET", "localhost:9005")
+	UserServiceGRPCTarget          = getenv("USER_SERVICE_GRPC_TARGET", "localhost:9011")
+	FriendServiceGRPCTarget        = getenv("FRIEND_SERVICE_GRPC_TARGET", "localhost:9012")
+	ConversationServiceGRPCTarget  = getenv("CONVERSATION_SERVICE_GRPC_TARGET", "localhost:9013")
+	FileServiceGRPCTarget          = getenv("FILE_SERVICE_GRPC_TARGET", "localhost:9015")
+	// 网关管理后台聚合探活用的各服务 HTTP /health（集群内需可解析）。
+	AdminHealthAuthURL         = getenv("ADMIN_HEALTH_AUTH_URL", "http://localhost:9000/health")
+	AdminHealthUserURL         = getenv("ADMIN_HEALTH_USER_URL", "http://localhost:9001/health")
+	AdminHealthFriendURL       = getenv("ADMIN_HEALTH_FRIEND_URL", "http://localhost:9002/health")
+	AdminHealthConversationURL = getenv("ADMIN_HEALTH_CONVERSATION_URL", "http://localhost:9003/health")
+	AdminHealthGroupURL        = getenv("ADMIN_HEALTH_GROUP_URL", "http://localhost:9004/health")
 	LogTopic               = getenv("LOG_TOPIC", "log-topic")
 	LogInfoSamplePct       = clampPct(getenvInt("LOG_INFO_SAMPLE_PCT", 100))
 

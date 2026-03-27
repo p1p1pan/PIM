@@ -10,7 +10,7 @@ import (
 
 	"pim/internal/config"
 	pbgateway "pim/internal/gateway/pb"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 
 	conversationservice "pim/internal/conversation/service"
 )

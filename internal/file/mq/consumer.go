@@ -13,7 +13,7 @@ import (
 	fileservice "pim/internal/file/service"
 	logkit "pim/internal/log/kit"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 
 	"github.com/Shopify/sarama"
 )

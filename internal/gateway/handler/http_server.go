@@ -25,7 +25,7 @@ import (
 	gatewaymodel "pim/internal/gateway/model"
 	gatewayservice "pim/internal/gateway/service"
 	pbgroup "pim/internal/group/pb"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 	pbuser "pim/internal/user/pb"
 )
 
@@ -44,6 +44,7 @@ type HTTPServer struct {
 	nodeID             string
 	logServiceBaseURL  string
 	fileServiceBaseURL string
+	apiRouteCatalog    []string
 }
 
 // NewHTTPServer 创建 Gateway HTTPServer。

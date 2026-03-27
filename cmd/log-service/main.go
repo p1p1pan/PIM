@@ -9,7 +9,7 @@ import (
 	"pim/internal/config"
 	loghandler "pim/internal/log/handler"
 	logmq "pim/internal/log/mq"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 	logstore "pim/internal/log/store"
 )
 

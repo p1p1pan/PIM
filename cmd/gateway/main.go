@@ -21,7 +21,7 @@ import (
 	pbuser "pim/internal/user/pb"
 
 	"pim/internal/config"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 func main() {
@@ -43,25 +43,25 @@ func main() {
 	}
 	defer redisClient.Close()
 	// 建立到各后端服务的 gRPC 连接。
-	authConn, err := dialGRPC("auth service", "localhost:9005")
+	authConn, err := dialGRPC("auth service", config.AuthServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer authConn.Close()
 	authClient := pbauth.NewAuthServiceClient(authConn)
-	userConn, err := dialGRPC("user service", "localhost:9011")
+	userConn, err := dialGRPC("user service", config.UserServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer userConn.Close()
 	userClient := pbuser.NewUserServiceClient(userConn)
-	friendConn, err := dialGRPC("friend service", "localhost:9012")
+	friendConn, err := dialGRPC("friend service", config.FriendServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer friendConn.Close()
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
-	conversationConn, err := dialGRPC("conversation service", "localhost:9013")
+	conversationConn, err := dialGRPC("conversation service", config.ConversationServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func main() {
 	}
 	defer groupConn.Close()
 	groupClient := pbgroup.NewGroupServiceClient(groupConn)
-	fileConn, err := dialGRPC("file service", "localhost:9015")
+	fileConn, err := dialGRPC("file service", config.FileServiceGRPCTarget)
 	if err != nil {
 		log.Fatal(err)
 	}

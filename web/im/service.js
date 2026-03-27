@@ -35,7 +35,7 @@ window.buildIMMethods = function buildIMMethods() {
           method: "POST",
           body: {
             client_upload_id: `upl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
-            file_name: file.name || "未命名文件",
+            file_name: file.name || "unnamed-file",
             file_size: Number(file.size || 0),
             mime_type: file.type || "application/octet-stream",
             biz_type: isGroup ? "group" : "private",
@@ -51,7 +51,7 @@ window.buildIMMethods = function buildIMMethods() {
         });
         if (!uploadResp.ok) {
           const t = await uploadResp.text();
-          throw new Error(t || `上传失败: HTTP ${uploadResp.status}`);
+          throw new Error(t || `文件上传失败: HTTP ${uploadResp.status}`);
         }
         await apiRequest(`/api/v1/files/${encodeURIComponent(f.id)}/commit`, { method: "POST", body: {} });
         await this.ensureFileMeta(f.id);
@@ -116,7 +116,7 @@ window.buildIMMethods = function buildIMMethods() {
     },
     connectWs() {
       if (this.ws?.readyState === WebSocket.OPEN) return;
-      this.ws = new WebSocket(`ws://localhost:8080/ws?token=${encodeURIComponent(this.token)}`);
+      this.ws = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(this.token)}`);
       this.ws.onopen = () => {
         this.wsStatus = "已连接";
         this.log("WebSocket 已连接");
@@ -173,7 +173,7 @@ window.buildIMMethods = function buildIMMethods() {
               }
               if ((evt.type === "group_created" || evt.type === "group_updated" || evt.type === "group_member_added" || evt.type === "group_owner_transferred") && gid) {
                 const idx = (this.groupsLocal || []).findIndex((g) => Number(g.id) === gid);
-                const name = String(evt.name || `群 #${gid}`);
+                const name = String(evt.name || `群聊 #${gid}`);
                 if (idx >= 0) {
                   this.groupsLocal[idx] = {
                     ...this.groupsLocal[idx],
@@ -199,7 +199,7 @@ window.buildIMMethods = function buildIMMethods() {
                 if (!this.groupsLocal.find((g) => Number(g.id) === gid)) {
                   this.groupsLocal.unshift({
                     id: gid,
-                    name: String(evt.group_name || `群 #${gid}`),
+                    name: String(evt.group_name || `群聊 #${gid}`),
                   });
                 }
                 const senderID = Number(evt.from_user_id || from || 0);
@@ -214,11 +214,11 @@ window.buildIMMethods = function buildIMMethods() {
                   seq: Number(evt.seq || 0),
                   isMe: senderID === Number(this.currentUser?.id || 0),
                 });
-                if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+                if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
                 if (Number(this.selectedGroupId || 0) !== gid) {
                   this.groupUnreadMap[gid] = Number(this.groupUnreadMap[gid] || 0) + 1;
                 } else {
-                  this.safeCall(() => this.markCurrentGroupRead(), "上报群已读失败");
+                  this.safeCall(() => this.markCurrentGroupRead(), "更新群已读失败");
                 }
                 this.queueLightSync();
                 return;
@@ -231,7 +231,7 @@ window.buildIMMethods = function buildIMMethods() {
           const payload = this.parseMessagePayload(content);
           const item = { from_user_id: from, content: payload.text, isMe: false, ui_type: payload.uiType, file_id: payload.fileID, file_name: payload.fileName };
           this.messages.push(item);
-          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
           this.queueLightSync();
           return;
         }
@@ -306,7 +306,7 @@ window.buildIMMethods = function buildIMMethods() {
       this.messages = (res.messages || []).map((m) => ({
         ...(() => {
           const payload = this.parseMessagePayload(m.content);
-          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载历史文件元信息失败");
           return {
             from_user_id: m.from_user_id,
             content: payload.text,
@@ -338,7 +338,7 @@ window.buildIMMethods = function buildIMMethods() {
         file_name: payload.fileName,
         isMe: true,
       });
-      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "发送后刷新文件元信息失败");
       this.msgInput = "";
       await this.loadConversations();
     },
@@ -364,7 +364,7 @@ window.buildIMMethods = function buildIMMethods() {
         isMe: true,
         localEcho: true,
       });
-      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "发送后刷新文件元信息失败");
       this.groupMessagesMap[gid] = list;
       await apiRequest(`/api/v1/groups/${encodeURIComponent(gid)}/messages`, {
         method: "POST",
@@ -384,7 +384,7 @@ window.buildIMMethods = function buildIMMethods() {
       const messages = (res.messages || []).map((m) => ({
         ...(() => {
           const payload = this.parseMessagePayload(m.content);
-          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "获取文件信息失败");
+          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载历史文件元信息失败");
           return {
             from_user_id: Number(m.from_user_id || 0),
             message_type: String(m.message_type || "text"),
@@ -458,7 +458,7 @@ window.buildIMMethods = function buildIMMethods() {
     async addGroupMemberByID() {
       const gid = this.currentGroupID;
       const uid = Number(this.groupMemberAddInput || 0);
-      if (!gid || !uid) throw new Error("请输入有效用户ID");
+      if (!gid || !uid) throw new Error("群 ID 或用户 ID 无效");
       await apiRequest(`/api/v1/groups/${encodeURIComponent(gid)}/members`, {
         method: "POST",
         body: { target_user_id: uid },
@@ -480,7 +480,7 @@ window.buildIMMethods = function buildIMMethods() {
     async transferGroupOwnerByID() {
       const gid = this.currentGroupID;
       const uid = Number(this.groupTransferInput || 0);
-      if (!gid || !uid) throw new Error("请输入有效用户ID");
+      if (!gid || !uid) throw new Error("群 ID 或用户 ID 无效");
       await apiRequest(`/api/v1/groups/${encodeURIComponent(gid)}/transfer-owner`, {
         method: "POST",
         body: { target_user_id: uid },
@@ -551,7 +551,7 @@ window.buildIMMethods = function buildIMMethods() {
       this.showCreateGroupModal = true;
     },
     async confirmCreateGroupBySelection() {
-      const name = this.createGroupName.trim() || `群聊 ${Date.now().toString().slice(-4)}`;
+      const name = this.createGroupName.trim() || `新群聊 ${Date.now().toString().slice(-4)}`;
       const members = this.selectedFriendIDs.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0);
       const res = await apiRequest("/api/v1/groups", {
         method: "POST",
@@ -576,7 +576,7 @@ window.buildIMMethods = function buildIMMethods() {
       });
       this.showAddFriendModal = false;
       await this.loadFriendRequestsCenter();
-      this.log(`已发送好友申请给 #${toID}`);
+      this.log(`已发送好友申请 #${toID}`);
     },
     async approveRequest(id) {
       await apiRequest(`/api/v1/friends/requests/${encodeURIComponent(id)}/approve`, { method: "POST" });
@@ -588,14 +588,14 @@ window.buildIMMethods = function buildIMMethods() {
     },
     async deleteFriendByID(userID) {
       const uid = Number(userID || 0);
-      if (!uid) throw new Error("无效用户ID");
+      if (!uid) throw new Error("用户 ID 无效");
       if (!window.confirm(`确认删除好友 #${uid} 吗？`)) return;
       await apiRequest(`/api/v1/friends/${encodeURIComponent(uid)}`, { method: "DELETE" });
       await Promise.all([
         this.loadFriends(),
         this.loadFriendRequestsCenter(),
       ]);
-      // 若当前正打开已删除好友会话，清空会话窗口，避免继续误发消息。
+      // 如果当前正在和该好友聊天，删除后清空会话区，避免误发消息。
       if (Number(this.currentPeerId || 0) === uid) {
         this.currentPeerId = null;
         this.messages = [];
@@ -615,7 +615,7 @@ window.buildIMMethods = function buildIMMethods() {
       this.stopAutoSync();
       this.autoSyncTimer = setInterval(() => {
         if (document.hidden) return;
-        this.safeCall(() => this.refreshAll(), "自动同步失败");
+        this.safeCall(() => this.refreshAll(), "自动刷新失败");
       }, 3000);
     },
     stopAutoSync() {
@@ -632,8 +632,9 @@ window.buildIMMethods = function buildIMMethods() {
       if (this.pendingSyncTimer) return;
       this.pendingSyncTimer = setTimeout(async () => {
         this.pendingSyncTimer = null;
-        await this.safeCall(() => this.refreshAll(), "实时同步失败");
+        await this.safeCall(() => this.refreshAll(), "轻量刷新失败");
       }, 400);
     },
   };
 };
+

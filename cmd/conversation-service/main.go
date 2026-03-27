@@ -18,10 +18,10 @@ import (
 	pbconversation "pim/internal/conversation/pb"
 	conversationrepo "pim/internal/conversation/repo"
 	conversationservice "pim/internal/conversation/service"
-	pimdb "pim/internal/db"
+	pimdb "pim/internal/kit/db"
 	pbgateway "pim/internal/gateway/pb"
-	"pim/internal/mq/kafka"
-	observemetrics "pim/internal/observability/metrics"
+	"pim/internal/kit/mq/kafka"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 func main() {

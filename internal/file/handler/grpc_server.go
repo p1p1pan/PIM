@@ -12,7 +12,7 @@ import (
 	filemodel "pim/internal/file/model"
 	pbfile "pim/internal/file/pb"
 	fileservice "pim/internal/file/service"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -1,7 +1,7 @@
 window.buildAdminMethods = function buildAdminMethods() {
   return {
     backIM() {
-      location.href = "./index.html";
+      location.href = "../index.html";
     },
     async safeCall(fn, fallback) {
       this.error = "";
@@ -20,25 +20,191 @@ window.buildAdminMethods = function buildAdminMethods() {
       if (menu === "overview") {
         this.safeCall(() => this.loadMetrics(), "加载运行概览失败");
       }
-      if (menu === "health") {
-        this.safeCall(() => this.loadHealth(), "加载健康状态失败");
-      }
       if (menu === "fileDlq") {
         this.safeCall(() => this.loadFileDlq(), "加载文件扫描死信失败");
       }
+    },
+    sparklinePath(series, width = 180, height = 44) {
+      const arr = Array.isArray(series) ? series : [];
+      if (arr.length === 0) return "";
+      const vals = arr.map((x) => Number(x?.val || 0));
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const span = max - min || 1;
+      const step = arr.length > 1 ? width / (arr.length - 1) : 0;
+      const points = vals.map((v, i) => {
+        const x = i * step;
+        const y = height - ((v - min) / span) * height;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      });
+      return `M ${points.join(" L ")}`;
+    },
+    sparklineMouseMove(evt, series, metricLabel = "value", unit = "") {
+      const arr = Array.isArray(series) ? series : [];
+      if (!arr.length) {
+        this.sparkTooltip.show = false;
+        return;
+      }
+      const rect = evt.currentTarget.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (evt.clientX - rect.left) / Math.max(1, rect.width)));
+      const idx = Math.min(arr.length - 1, Math.max(0, Math.round((arr.length - 1) * ratio)));
+      const p = arr[idx] || { ts: "-", val: 0 };
+      const valueText = `${Number(p.val || 0).toFixed(3)}${unit ? ` ${unit}` : ""}`;
+      this.sparkTooltip = {
+        show: true,
+        left: evt.clientX + 12,
+        top: evt.clientY + 12,
+        text: `${metricLabel}: ${valueText} | 时间: ${p.ts || "-"}`,
+      };
+    },
+    sparklineMouseLeave() {
+      this.sparkTooltip.show = false;
+    },
+    tsLatest(series, digits = 3) {
+      const arr = Array.isArray(series) ? series : [];
+      if (!arr.length) return "0";
+      return Number(arr[arr.length - 1]?.val || 0).toFixed(digits);
+    },
+    onOverviewWindowChange() {
+      this.safeCall(() => this.loadMetrics(), "切换时间窗口失败");
+    },
+    isUsefulAPIRoute(route) {
+      const p = String(route || "").trim();
+      if (!p) return false;
+      // Hide low-value admin/health/drill endpoints from API quality display.
+      if (p === "/api/v1/admin/health") return false;
+      if (p === "/api/v1/admin/metrics") return false;
+      if (p === "/api/v1/admin/observability/overview") return false;
+      if (p.startsWith("/api/v1/admin/observability/drill/")) return false;
+      return true;
+    },
+    apiVizMap() {
+      const src = this.overview?.timeseries?.api_route || {};
+      const out = {};
+      for (const [route, series] of Object.entries(src)) {
+        if (!this.isUsefulAPIRoute(route)) continue;
+        out[route] = series;
+      }
+      return out;
+    },
+    apiVizKeys() {
+      const m = this.apiVizMap();
+      const all = Object.keys(m || {});
+      const q = String(this.apiVizSearch || "").trim().toLowerCase();
+      const filtered = q ? all.filter((k) => k.toLowerCase().includes(q)) : all;
+      return filtered.sort((a, b) => a.localeCompare(b));
+    },
+    clearApiVizSelection() {
+      this.apiVizSelectedKeys = [];
+    },
+    toggleApiVizKey(key) {
+      const arr = Array.isArray(this.apiVizSelectedKeys) ? this.apiVizSelectedKeys : [];
+      const idx = arr.indexOf(key);
+      if (idx >= 0) {
+        arr.splice(idx, 1);
+      } else {
+        arr.push(key);
+      }
+      this.apiVizSelectedKeys = [...arr];
+    },
+    apiVizSelectedItems() {
+      const m = this.apiVizMap();
+      const keys = Array.isArray(this.apiVizSelectedKeys) ? this.apiVizSelectedKeys : [];
+      return keys
+        .filter((k) => m && m[k])
+        .map((k) => ({ key: k, series: m[k] || {} }));
+    },
+    startOverviewAutoRefresh() {
+      if (this._overviewTimer) clearInterval(this._overviewTimer);
+      if (!this.overviewAutoRefresh) return;
+      this._overviewTimer = setInterval(() => {
+        if (this.activeMenu !== "overview") return;
+        this.safeCall(() => this.loadMetrics(), "自动刷新失败");
+      }, 5000);
+    },
+    stopOverviewAutoRefresh() {
+      if (this._overviewTimer) {
+        clearInterval(this._overviewTimer);
+        this._overviewTimer = null;
+      }
+    },
+    apiQualityRows() {
+      const rows = Array.isArray(this.overview?.api_quality) ? this.overview.api_quality : [];
+      return rows.filter((r) => this.isUsefulAPIRoute(String(r?.route || "")));
+    },
+    apiQualityFilteredRows() {
+      const rows = this.apiQualityRows();
+      const keyword = String(this.apiQualityKeyword || "").trim().toLowerCase();
+      const filtered = rows.filter((row) => {
+        if (!keyword) return true;
+        const route = String(row?.route || "").toLowerCase();
+        return route.includes(keyword);
+      });
+      return filtered.sort((a, b) => Number(b?.qps || 0) - Number(a?.qps || 0));
+    },
+    apiQualityTotalPages() {
+      const pageSize = Math.max(1, Number(this.apiQualityPageSize || 12));
+      const total = this.apiQualityFilteredRows().length;
+      return Math.max(1, Math.ceil(total / pageSize));
+    },
+    normalizeApiQualityPage() {
+      const totalPages = this.apiQualityTotalPages();
+      const current = Math.max(1, Number(this.apiQualityPage || 1));
+      this.apiQualityPage = Math.min(current, totalPages);
+    },
+    apiQualityPagedRows() {
+      this.normalizeApiQualityPage();
+      const rows = this.apiQualityFilteredRows();
+      const pageSize = Math.max(1, Number(this.apiQualityPageSize || 12));
+      const start = (this.apiQualityPage - 1) * pageSize;
+      return rows.slice(start, start + pageSize);
+    },
+    resetApiQualityPage() {
+      this.apiQualityPage = 1;
+    },
+    prevApiQualityPage() {
+      this.normalizeApiQualityPage();
+      if (this.apiQualityPage > 1) this.apiQualityPage -= 1;
+    },
+    nextApiQualityPage() {
+      this.normalizeApiQualityPage();
+      const totalPages = this.apiQualityTotalPages();
+      if (this.apiQualityPage < totalPages) this.apiQualityPage += 1;
+    },
+    updateLogStats() {
+      const items = Array.isArray(this.items) ? this.items : [];
+      const serviceSet = new Set();
+      let err = 0;
+      let warn = 0;
+      for (const it of items) {
+        const lvl = String(it?.level || "").toLowerCase();
+        if (lvl === "error") err += 1;
+        if (lvl === "warn" || lvl === "warning") warn += 1;
+        const svc = String(it?.service || "").trim();
+        if (svc) serviceSet.add(svc);
+      }
+      this.logStats = {
+        total: items.length,
+        error: err,
+        warn,
+        services: serviceSet.size,
+      };
     },
     parseItems(res) {
       const r = res || {};
       if (Array.isArray(r.items)) {
         this.items = r.items;
+        this.updateLogStats();
         return;
       }
       const nestedHits = r?.hits?.hits;
       if (Array.isArray(nestedHits)) {
         this.items = nestedHits.map((x) => x?._source || x).filter(Boolean);
+        this.updateLogStats();
         return;
       }
       this.items = [];
+      this.updateLogStats();
     },
     loadRecentTraceIDs() {
       this.recentTraceIDs = loadTraceHistory();
@@ -101,16 +267,13 @@ window.buildAdminMethods = function buildAdminMethods() {
       this.eventID = this.lastQuery.value;
       await this.loadByEvent();
     },
-    async loadHealth() {
-      const res = await apiRequest("/api/v1/admin/health");
-      this.healthGeneratedAt = String(res.generated_at || "");
-      this.healthServices = Array.isArray(res.services) ? res.services : [];
-    },
     async loadMetrics() {
       let res;
       try {
         // Stage5 contract-first endpoint for frontend observability.
-        res = await apiRequest("/api/v1/admin/observability/overview");
+        const q = new URLSearchParams();
+        q.set("window", String(this.overviewWindow || "15m"));
+        res = await apiRequest(`/api/v1/admin/observability/overview?${q.toString()}`);
       } catch (_) {
         // Backward compatibility for older gateway versions.
         const legacy = await apiRequest("/api/v1/admin/metrics");
@@ -119,6 +282,21 @@ window.buildAdminMethods = function buildAdminMethods() {
           api_quality: [],
           message_pipeline: [],
           gateway_connections: { node: "gateway-1", active_connections: Number(legacy.online_users || 0), connect_rate: 0, disconnect_rate: 0 },
+          timeseries: {
+            window: String(this.overviewWindow || "15m"),
+            ingress_qps: [],
+            api_p95_ms: [],
+            error_rate: [],
+            push_success_rate: [],
+            kafka_retry_total: [],
+            api_domain: {},
+            api_route: {},
+          },
+          downstream_write_quality: {
+            gateway_ingress: { dispatch_p95_ms: 0, member_check_p95_ms: 0, ingress_total_p95_ms: 0 },
+            kafka_write: { produce_total: 0, consume_total: 0, retry_like_total: 0, dlq_total: 0, handler_p95_ms: 0 },
+            gateway_push: { ok_total: 0, fail_total: 0, success_rate: 0, delivery_p95_ms: 0 },
+          },
           alerts_overview: { active_count: 0, severity: "none", source: "none", started_at: "" },
           slo_overview: {
             api_availability_target: 0.99,
@@ -139,6 +317,21 @@ window.buildAdminMethods = function buildAdminMethods() {
         api_quality: Array.isArray(res.api_quality) ? res.api_quality : [],
         message_pipeline: Array.isArray(res.message_pipeline) ? res.message_pipeline : [],
         gateway_connections: res.gateway_connections || { node: "gateway-1", active_connections: 0, connect_rate: 0, disconnect_rate: 0 },
+        timeseries: res.timeseries || {
+          window: String(this.overviewWindow || "15m"),
+          ingress_qps: [],
+          api_p95_ms: [],
+          error_rate: [],
+          push_success_rate: [],
+          kafka_retry_total: [],
+          api_domain: {},
+          api_route: {},
+        },
+        downstream_write_quality: res.downstream_write_quality || {
+          gateway_ingress: { dispatch_p95_ms: 0, member_check_p95_ms: 0, ingress_total_p95_ms: 0 },
+          kafka_write: { produce_total: 0, consume_total: 0, retry_like_total: 0, dlq_total: 0, handler_p95_ms: 0 },
+          gateway_push: { ok_total: 0, fail_total: 0, success_rate: 0, delivery_p95_ms: 0 },
+        },
         alerts_overview: res.alerts_overview || { active_count: 0, severity: "none", source: "none", started_at: "" },
         slo_overview: res.slo_overview || {
           api_availability_target: 0.99,
@@ -153,12 +346,14 @@ window.buildAdminMethods = function buildAdminMethods() {
         },
         generated_at: String(res.generated_at || ""),
       };
+      this.normalizeApiQualityPage();
     },
     async initAdminPage() {
       this.loadRecentTraceIDs();
       await this.safeCall(async () => {
-        await Promise.all([this.loadMetrics(), this.loadHealth()]);
+        await this.loadMetrics();
       }, "初始化后台失败");
+      this.startOverviewAutoRefresh();
     },
     async loadFileDlq() {
       const lim = Number(this.dlqLimit) || 20;

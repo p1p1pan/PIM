@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"pim/internal/config"
-	pimdb "pim/internal/db"
+	pimdb "pim/internal/kit/db"
 	filehandler "pim/internal/file/handler"
 	filemodel "pim/internal/file/model"
 	filemq "pim/internal/file/mq"
@@ -21,8 +21,8 @@ import (
 	filestorage "pim/internal/file/storage"
 	pbfriend "pim/internal/friend/pb"
 	pbgroup "pim/internal/group/pb"
-	"pim/internal/mq/kafka"
-	observemetrics "pim/internal/observability/metrics"
+	"pim/internal/kit/mq/kafka"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 func main() {
@@ -60,7 +60,7 @@ func main() {
 	defer groupConn.Close()
 	groupClient := pbgroup.NewGroupServiceClient(groupConn)
 	groupChecker := fileservice.NewGroupGRPCChecker(groupClient)
-	friendConn, err := grpc.NewClient("localhost:9012", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	friendConn, err := grpc.NewClient(config.FriendServiceGRPCTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to friend service: %v", err)
 	}

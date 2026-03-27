@@ -11,7 +11,7 @@ import (
 
 	filemodel "pim/internal/file/model"
 	fileservice "pim/internal/file/service"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
 // HTTPServer 提供 file-service 的 HTTP 管理接口。

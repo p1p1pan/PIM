@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init-topics
+  namespace: pim
+spec:
+  backoffLimit: 12
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-init
+          image: confluentinc/cp-kafka:7.5.0
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -e
+              until kafka-broker-api-versions --bootstrap-server kafka:9092 >/dev/null 2>&1; do sleep 2; done
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic im-message --partitions 64 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic im-message-push --partitions 64 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic im-message-read --partitions 16 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic log-topic --partitions 16 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic group-message --partitions 64 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic group-member-sync --partitions 16 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic file-scan --partitions 8 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic file-scan-dlq --partitions 2 --replication-factor 1
+              kafka-topics --bootstrap-server kafka:9092 --list

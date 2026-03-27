@@ -24,7 +24,7 @@ import (
 	gatewaymodel "pim/internal/gateway/model"
 	groupmodel "pim/internal/group/model"
 	pbgroup "pim/internal/group/pb"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 type groupReadyCacheEntry struct {

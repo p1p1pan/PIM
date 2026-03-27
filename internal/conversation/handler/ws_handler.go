@@ -12,7 +12,7 @@ import (
 
 	"pim/internal/conversation/model"
 	pbconversation "pim/internal/conversation/pb"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}

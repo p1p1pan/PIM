@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pim-runtime
+  namespace: pim
+data:
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: pim
+  POSTGRES_DB: pim
+  POSTGRES_MAX_OPEN_CONNS: "80"
+  POSTGRES_MAX_IDLE_CONNS: "40"
+  POSTGRES_CONN_MAX_LIFETIME_SEC: "300"
+  POSTGRES_CONN_MAX_IDLE_TIME_SEC: "120"
+  REDIS_ADDR: redis:6379
+  REDIS_DB: "0"
+  KAFKA_BROKERS: kafka:9092
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: pimminio
+  MINIO_USE_SSL: "false"
+  MINIO_BUCKET: pim-files
+  ELASTICSEARCH_URL: http://elasticsearch:9200
+  LOG_SERVICE_HTTP_URL: http://log-service:9016
+  FILE_SERVICE_HTTP_URL: http://file-service:9006
+  AUTH_HTTP_ADDR: :9000
+  AUTH_GRPC_ADDR: :9005
+  USER_HTTP_ADDR: :9001
+  USER_GRPC_ADDR: :9011
+  GATEWAY_HTTP_ADDR: :8080
+  GATEWAY_PUSH_GRPC_ADDR: :8090
+  GATEWAY_NODE_ID: gateway-1
+  AUTH_SERVICE_GRPC_TARGET: auth-service:9005
+  USER_SERVICE_GRPC_TARGET: user-service:9011
+  FRIEND_SERVICE_GRPC_TARGET: friend-service:9012
+  CONVERSATION_SERVICE_GRPC_TARGET: conversation-service:9013
+  FILE_SERVICE_GRPC_TARGET: file-service:9015
+  GROUP_SERVICE_GRPC_TARGET: group-service:9014
+  GATEWAY_PUSH_GRPC_TARGET: gateway:8090
+  GATEWAY_PUSH_GRPC_TARGETS: gateway-0=gateway-0.gateway-headless.pim.svc.cluster.local:8090,gateway-1=gateway-1.gateway-headless.pim.svc.cluster.local:8090
+  ADMIN_HEALTH_AUTH_URL: http://auth-service:9000/health
+  ADMIN_HEALTH_USER_URL: http://user-service:9001/health
+  ADMIN_HEALTH_FRIEND_URL: http://friend-service:9002/health
+  ADMIN_HEALTH_CONVERSATION_URL: http://conversation-service:9003/health
+  ADMIN_HEALTH_GROUP_URL: http://group-service:9004/health
+  CONVERSATION_HTTP_ADDR: :9003
+  CONVERSATION_GRPC_ADDR: :9013
+  GROUP_HTTP_ADDR: :9004
+  GROUP_GRPC_ADDR: :9014

@@ -4,6 +4,7 @@ window.IM_TEMPLATE = `
     <div class="profile">
       <div class="avatar">{{ userInitial }}</div>
       <div class="profile-name">{{ currentUser?.username || "未登录" }}</div>
+      <div class="profile-status">ID: {{ currentUser?.id || "-" }}</div>
       <div class="profile-status">WS: {{ wsStatus }}</div>
     </div>
     <div class="nav-list">

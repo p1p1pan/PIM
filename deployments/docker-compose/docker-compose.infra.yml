@@ -186,6 +186,15 @@ services:
     ports:
       - "3000:3000"
 
+  gateway-lb:
+    image: nginx:1.27-alpine
+    container_name: pim-gateway-lb
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    volumes:
+      - ../docker/nginx.gateway-lb.conf:/etc/nginx/nginx.conf:ro
+
 volumes:
   pim_pgdata:
   pim_redisdata:

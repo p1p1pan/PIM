@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-service
+  namespace: pim
+spec:
+  selector:
+    app: log-service
+  ports:
+    - name: http
+      port: 9016
+      targetPort: 9016
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-service
+  namespace: pim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-service
+  template:
+    metadata:
+      labels:
+        app: log-service
+    spec:
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z kafka 9092 && nc -z elasticsearch 9200; do sleep 2; done"]
+      containers:
+        - name: log-service
+          image: pim/log-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9016
+          envFrom:
+            - configMapRef:
+                name: pim-runtime
+            - secretRef:
+                name: pim-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9016
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9016
+            initialDelaySeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

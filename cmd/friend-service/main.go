@@ -11,10 +11,10 @@ import (
 	"google.golang.org/grpc"
 
 	"pim/internal/config"
-	pimdb "pim/internal/db"
+	pimdb "pim/internal/kit/db"
 	friendhandler "pim/internal/friend/handler"
 	friendmodel "pim/internal/friend/model"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 	pbfriend "pim/internal/friend/pb"
 	friendrepo "pim/internal/friend/repo"
 	friendservice "pim/internal/friend/service"

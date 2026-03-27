@@ -13,7 +13,7 @@ import (
 	"pim/internal/config"
 	"pim/internal/conversation/model"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 
 	conversationservice "pim/internal/conversation/service"
 )

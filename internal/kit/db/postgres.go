@@ -1,5 +1,5 @@
 // Package db 提供各服务共用的 PostgreSQL（GORM）初始化，统一配置 database/sql 连接池。
-// 不设分区/分表逻辑；调优通过环境变量（见 internal/config）在部署侧完成。
+// 不设分区/分表逻辑；调优通过环境变量（见 internal/config，与 kit 并列）在部署侧完成。
 package db
 
 import (

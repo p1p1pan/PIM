@@ -8,7 +8,7 @@ import (
 	"pim/internal/config"
 	logkit "pim/internal/log/kit"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
 func emitConsumerLog(producer *kafka.Producer, entry logmodel.Log) {

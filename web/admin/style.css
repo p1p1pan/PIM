@@ -54,6 +54,15 @@ input {
   color: #e8edf8;
   padding: 0 10px;
 }
+select {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #344666;
+  border-radius: 9px;
+  background: #0f1522;
+  color: #e8edf8;
+  padding: 0 10px;
+}
 button {
   margin-top: 10px;
   width: 100%;
@@ -107,6 +116,17 @@ button.primary { background: #2d65f7; border: none; color: #fff; }
 .lvl.warn { background: #d38b12; }
 .msg { margin-top: 6px; font-size: 14px; }
 .meta { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #9fb0d3; }
+.raw {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #2d3951;
+  background: #0e1420;
+  color: #c9d3e7;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+}
 .muted { color: #9fb0d3; font-size: 12px; }
 .empty { color: #9fb0d3; padding: 10px 0; }
 .health-grid {
@@ -129,6 +149,101 @@ button.primary { background: #2d65f7; border: none; color: #fff; }
 }
 .kpi .k { color: #9fb0d3; font-size: 12px; }
 .kpi .v { margin-top: 6px; font-size: 28px; font-weight: 700; color: #dbe6ff; }
+.sparkline {
+  width: 100%;
+  height: 44px;
+  margin-top: 8px;
+}
+.sparkline path {
+  fill: none;
+  stroke: #4f8cff;
+  stroke-width: 2;
+}
+.viz-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  margin-bottom: 10px;
+}
+.api-viz-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.viz-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.viz-selected .chip {
+  margin-top: 0;
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid #2d3951;
+  background: #101725;
+  color: #c9d3e7;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+}
+.viz-picker-list {
+  border: 1px solid #2d3951;
+  border-radius: 10px;
+  background: #101725;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+.viz-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid #253049;
+  font-size: 12px;
+  color: #c9d3e7;
+}
+.viz-row:first-child {
+  border-top: none;
+}
+.viz-row input {
+  width: auto;
+  height: auto;
+}
+.chip-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #2d3951;
+  border-radius: 999px;
+  background: #101725;
+  color: #c9d3e7;
+  padding: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.chip-check input {
+  width: auto;
+  height: auto;
+}
+.spark-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #2d3951;
+  background: #0b111c;
+  color: #dbe6ff;
+  font-size: 12px;
+}
 .health-card {
   border: 1px solid #2d3951;
   border-radius: 10px;
@@ -141,6 +256,42 @@ button.primary { background: #2d65f7; border: none; color: #fff; }
 .table-wrap h4 {
   margin: 0 0 8px;
   color: #dbe6ff;
+}
+.table-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.table-filters {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: #9fb0d3;
+}
+.checkbox-inline input {
+  width: auto;
+  height: auto;
+}
+.mini-input {
+  width: 72px;
+}
+.table-pager {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .simple-table {
   width: 100%;
@@ -180,12 +331,20 @@ button.primary { background: #2d65f7; border: none; color: #fff; }
   .main { grid-template-columns: 1fr; }
   .health-grid { grid-template-columns: 1fr; }
   .overview-cards { grid-template-columns: 1fr; }
+  .table-filters { grid-template-columns: 1fr; }
+  .table-pager { justify-content: flex-start; }
 }
 
 .head label.inline {
   display: inline;
   margin: 0 6px 0 0;
   vertical-align: middle;
+}
+.inline-select {
+  width: 84px;
+  display: inline-block;
+  margin-right: 8px;
+  height: 30px;
 }
 .inline-input {
   width: 88px;

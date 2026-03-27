@@ -15,7 +15,7 @@ if (-not (Test-Path $drillScript)) {
   exit 1
 }
 
-Write-Host "== Stage5 Validation Runner =="
+Write-Host "== Alert Drill Validation Runner =="
 Write-Host "Gateway:    $GatewayBaseUrl"
 Write-Host "Prometheus: $PrometheusBaseUrl"
 Write-Host ""
@@ -55,7 +55,7 @@ $results += Run-Scenario -Scenario "http500"
 $results += Run-Scenario -Scenario "latency"
 
 Write-Host ""
-Write-Host "== Stage5 Validation Summary =="
+Write-Host "== Alert Drill Validation Summary =="
 $passCount = 0
 foreach ($r in $results) {
   $status = if ($r.passed) { "PASS" } else { "FAIL" }
@@ -64,9 +64,9 @@ foreach ($r in $results) {
 }
 
 if ($passCount -eq $results.Count) {
-  Write-Host "[PASS] All stage5 drill scenarios passed."
+  Write-Host "[PASS] All alert drill scenarios passed."
   exit 0
 }
 
-Write-Host "[FAIL] Some stage5 drill scenarios failed."
+Write-Host "[FAIL] Some alert drill scenarios failed."
 exit 1

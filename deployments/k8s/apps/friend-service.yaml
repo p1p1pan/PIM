@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: friend-service
+  namespace: pim
+spec:
+  selector:
+    app: friend-service
+  ports:
+    - name: grpc
+      port: 9012
+      targetPort: 9012
+    - name: http
+      port: 9002
+      targetPort: 9002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: friend-service
+  namespace: pim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: friend-service
+  template:
+    metadata:
+      labels:
+        app: friend-service
+    spec:
+      initContainers:
+        - name: wait-deps
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432 && nc -z redis 6379; do sleep 2; done"]
+      containers:
+        - name: friend-service
+          image: pim/friend-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 9012
+            - name: http
+              containerPort: 9002
+          envFrom:
+            - configMapRef:
+                name: pim-runtime
+            - secretRef:
+                name: pim-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9002
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9002
+            initialDelaySeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

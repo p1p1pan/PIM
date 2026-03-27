@@ -13,10 +13,11 @@ import (
 	"pim/internal/conversation/model"
 	pbgateway "pim/internal/gateway/pb"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
-// handleImPushBatch 批量解码后 Pipeline GET ws:conn；对**不同接收者**并行 PushToConn（同一 ToUserID 仍按分区内顺序串行）。
+// handleImPushBatch 批量解码后 Pipeline GET ws:conn，并按 gateway 节点聚合后发送批量推送。
+// 注意：当前实现是“按节点顺序发送批次”，而非节点级并行；分区内消息顺序仍由消费模型保证。
 func handleImPushBatch(ctx context.Context, rdb *redis.Client, pushClients map[string]pbgateway.PushServiceClient, producer *kafka.Producer, batch []*sarama.ConsumerMessage) error {
 	if len(batch) == 0 {
 		return nil

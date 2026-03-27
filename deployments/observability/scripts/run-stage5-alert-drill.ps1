@@ -60,7 +60,7 @@ function Get-FiringAlerts {
   return @($json.data.alerts | Where-Object { $_.state -eq "firing" } | ForEach-Object { $_.labels.alertname })
 }
 
-Write-Host "== Stage5 Alert Drill =="
+Write-Host "== Alert Drill =="
 Write-Host "Scenario: $Scenario"
 Write-Host "Gateway:  $GatewayBaseUrl"
 Write-Host "Prom:     $PrometheusBaseUrl"

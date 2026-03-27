@@ -9,7 +9,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"pim/internal/config"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 // ProducerConfig 用于配置 Kafka Producer。

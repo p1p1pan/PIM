@@ -11,8 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	pimdb "pim/internal/db"
-	observemetrics "pim/internal/observability/metrics"
+	"pim/internal/config"
+	pimdb "pim/internal/kit/db"
+	observemetrics "pim/internal/kit/observability/metrics"
 	userhandler "pim/internal/user/handler"
 	usermodel "pim/internal/user/model"
 	userrepo "pim/internal/user/repo"
@@ -33,7 +34,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	userSvc := userservice.NewService(userrepo.NewUserRepo(db))
 	pbuser.RegisterUserServiceServer(grpcServer, userhandler.NewGRPCUserServer(userSvc))
-	listener, err := net.Listen("tcp", ":9011")
+	listener, err := net.Listen("tcp", config.UserGRPCAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -54,8 +55,8 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	log.Println("user-service gRPC :9011, health :9001")
-	if err := r.Run(":9001"); err != nil {
+	log.Printf("user-service gRPC %s, health %s", config.UserGRPCAddr, config.UserHTTPAddr)
+	if err := r.Run(config.UserHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -5,7 +5,6 @@ window.ADMIN_TEMPLATE = `
     <button class="menu" :class="{active: activeMenu==='overview'}" @click="switchMenu('overview')">运行概览</button>
     <button class="menu" :class="{active: activeMenu==='logs'}" @click="switchMenu('logs')">日志中心</button>
     <button class="menu" :class="{active: activeMenu==='fileDlq'}" @click="switchMenu('fileDlq')">文件扫描死信</button>
-    <button class="menu" :class="{active: activeMenu==='health'}" @click="switchMenu('health')">服务健康</button>
     <button class="menu ghost" @click="backIM">返回入口</button>
   </aside>
 
@@ -14,16 +13,48 @@ window.ADMIN_TEMPLATE = `
       <div class="head">
         <h3>运行概览</h3>
         <div>
+          <label class="inline">窗口</label>
+          <select class="inline-select" v-model="overviewWindow" @change="onOverviewWindowChange()">
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h">1h</option>
+            <option value="6h">6h</option>
+            <option value="24h">24h</option>
+          </select>
+          <label class="inline checkbox-inline" style="margin-left:8px;">
+            <input type="checkbox" v-model="overviewAutoRefresh" @change="overviewAutoRefresh ? startOverviewAutoRefresh() : stopOverviewAutoRefresh()" />
+            自动刷新
+          </label>
           <span class="muted">更新时间：{{ overview.generated_at || '-' }}</span>
           <button style="margin-left:10px" @click="safeCall(() => loadMetrics(), '刷新运行概览失败')">刷新</button>
         </div>
       </div>
       <div class="overview-cards">
-        <div class="kpi"><div class="k">在线连接</div><div class="v">{{ overview.gateway_connections.active_connections || 0 }}</div></div>
-        <div class="kpi"><div class="k">活跃告警</div><div class="v">{{ overview.alerts_overview.active_count || 0 }}</div></div>
-        <div class="kpi"><div class="k">API 可用性</div><div class="v">{{ Math.round((overview.slo_overview.api_availability_now || 0) * 10000) / 100 }}%</div></div>
-        <div class="kpi"><div class="k">连接速率(/s)</div><div class="v">{{ Number(overview.gateway_connections.connect_rate || 0).toFixed(3) }}</div></div>
-        <div class="kpi"><div class="k">断开速率(/s)</div><div class="v">{{ Number(overview.gateway_connections.disconnect_rate || 0).toFixed(3) }}</div></div>
+        <div class="kpi">
+          <div class="k">入口QPS</div>
+          <div class="v">{{ tsLatest(overview.timeseries?.ingress_qps, 3) }}</div>
+          <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, overview.timeseries?.ingress_qps, '入口QPS', 'req/s')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(overview.timeseries?.ingress_qps, 180, 44)" /></svg>
+        </div>
+        <div class="kpi">
+          <div class="k">API p95(ms)</div>
+          <div class="v">{{ tsLatest(overview.timeseries?.api_p95_ms, 0) }}</div>
+          <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, overview.timeseries?.api_p95_ms, 'API P95', 'ms')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(overview.timeseries?.api_p95_ms, 180, 44)" /></svg>
+        </div>
+        <div class="kpi">
+          <div class="k">错误率</div>
+          <div class="v">{{ tsLatest(overview.timeseries?.error_rate, 4) }}</div>
+          <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, overview.timeseries?.error_rate, '错误率', 'ratio')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(overview.timeseries?.error_rate, 180, 44)" /></svg>
+        </div>
+        <div class="kpi">
+          <div class="k">Push成功率(%)</div>
+          <div class="v">{{ tsLatest(overview.timeseries?.push_success_rate, 2) }}</div>
+          <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, overview.timeseries?.push_success_rate, 'Push成功率', '%')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(overview.timeseries?.push_success_rate, 180, 44)" /></svg>
+        </div>
+        <div class="kpi">
+          <div class="k">Kafka重试累计</div>
+          <div class="v">{{ tsLatest(overview.timeseries?.kafka_retry_total, 0) }}</div>
+          <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, overview.timeseries?.kafka_retry_total, 'Kafka重试累计', 'count')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(overview.timeseries?.kafka_retry_total, 180, 44)" /></svg>
+        </div>
       </div>
       <div class="health-grid">
         <div class="health-card">
@@ -43,12 +74,20 @@ window.ADMIN_TEMPLATE = `
         </div>
       </div>
       <div class="table-wrap">
-        <h4>API 质量（Top 12）</h4>
-        <table class="simple-table" v-if="overview.api_quality && overview.api_quality.length">
-          <thead><tr><th>service</th><th>route</th><th>qps</th><th>error_rate</th><th>p95(ms)</th></tr></thead>
+        <div class="table-head">
+          <h4>API 质量（可筛选分页）</h4>
+          <span class="muted">当前 {{ apiQualityFilteredRows().length }} / 全部 {{ apiQualityRows().length }}</span>
+        </div>
+        <div class="muted">数据源：gateway 入口 HTTP 指标（非下游服务内部写入链路）</div>
+        <div class="table-filters">
+          <input v-model="apiQualityKeyword" @input="resetApiQualityPage()" placeholder="按路由关键词过滤，如 /api/v1/groups" />
+          <label class="inline muted">每页</label>
+          <input class="mini-input" v-model.number="apiQualityPageSize" @change="resetApiQualityPage()" type="number" min="5" max="100" />
+        </div>
+        <table class="simple-table" v-if="apiQualityRows().length">
+          <thead><tr><th>route</th><th>qps</th><th>error_rate</th><th>p95(ms)</th></tr></thead>
           <tbody>
-            <tr v-for="(row, idx) in overview.api_quality.slice(0, 12)" :key="'aq-'+idx">
-              <td>{{ row.service }}</td>
+            <tr v-for="(row, idx) in apiQualityPagedRows()" :key="'aq-'+idx">
               <td>{{ row.route }}</td>
               <td>{{ Number(row.qps || 0).toFixed(3) }}</td>
               <td>{{ Number(row.error_rate || 0).toFixed(4) }}</td>
@@ -56,10 +95,69 @@ window.ADMIN_TEMPLATE = `
             </tr>
           </tbody>
         </table>
-        <div class="empty" v-else>暂无 API 质量数据</div>
+        <div class="table-pager" v-if="apiQualityRows().length">
+          <button class="small" :disabled="apiQualityPage<=1" @click="prevApiQualityPage()">上一页</button>
+          <span class="muted">第 {{ apiQualityPage }} / {{ apiQualityTotalPages() }} 页</span>
+          <button class="small" :disabled="apiQualityPage>=apiQualityTotalPages()" @click="nextApiQualityPage()">下一页</button>
+        </div>
+        <div class="empty" v-if="apiQualityRows().length && apiQualityFilteredRows().length===0">筛选结果为空，请调整条件</div>
+        <div class="empty" v-if="!apiQualityRows().length">暂无 API 质量数据</div>
       </div>
       <div class="table-wrap">
-        <h4>消息链路（Topic）</h4>
+        <div class="table-head">
+          <h4>API 可视化图板</h4>
+          <span class="muted">按路由分开选择（全量可选）</span>
+        </div>
+        <div class="api-viz-toolbar">
+          <button class="small" @click="apiVizPickerOpen=!apiVizPickerOpen">{{ apiVizPickerOpen ? '收起路由选择器' : '展开路由选择器' }}</button>
+          <button class="small" @click="clearApiVizSelection()">清空已选</button>
+          <span class="muted">已选 {{ apiVizSelectedKeys.length }} 条</span>
+        </div>
+        <div class="viz-selected" v-if="apiVizSelectedKeys.length">
+          <span class="chip" v-for="k in apiVizSelectedKeys" :key="'sel-chip-'+k">{{ k }}</span>
+        </div>
+        <div class="table-filters" v-if="apiVizPickerOpen">
+          <input v-model="apiVizSearch" placeholder="搜索路由（如 /api/v1/friends）" />
+        </div>
+        <div class="viz-picker-list" v-if="apiVizPickerOpen">
+          <label class="viz-row" v-for="k in apiVizKeys()" :key="'viz-'+k">
+            <input type="checkbox" :checked="apiVizSelectedKeys.includes(k)" @change="toggleApiVizKey(k)" />
+            <span>{{ k }}</span>
+          </label>
+        </div>
+        <div class="overview-cards" v-if="apiVizSelectedItems().length">
+          <div class="kpi" v-for="it in apiVizSelectedItems()" :key="'sel-'+it.key">
+            <div class="k">{{ it.key }}</div>
+            <div class="sub">qps: {{ tsLatest(it.series?.qps, 3) }} | err: {{ tsLatest(it.series?.error_rate, 4) }} | p95: {{ tsLatest(it.series?.p95_ms, 0) }}</div>
+            <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, it.series?.qps, 'QPS', 'req/s')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(it.series?.qps, 180, 44)" /></svg>
+            <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, it.series?.error_rate, '错误率', 'ratio')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(it.series?.error_rate, 180, 44)" /></svg>
+            <svg class="sparkline" viewBox="0 0 180 44" preserveAspectRatio="none" @mousemove="sparklineMouseMove($event, it.series?.p95_ms, 'P95', 'ms')" @mouseleave="sparklineMouseLeave()"><path :d="sparklinePath(it.series?.p95_ms, 180, 44)" /></svg>
+          </div>
+        </div>
+        <div class="empty" v-else>请选择上方任意路由查看趋势图</div>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head">
+          <h4>Topic 明细</h4>
+          <span class="muted">
+            Kafka 总览：produce {{ overview.downstream_write_quality?.kafka_write?.produce_total || 0 }}
+            / consume {{ overview.downstream_write_quality?.kafka_write?.consume_total || 0 }}
+            / retry {{ overview.downstream_write_quality?.kafka_write?.retry_like_total || 0 }}
+            / dlq {{ overview.downstream_write_quality?.kafka_write?.dlq_total || 0 }}
+          </span>
+        </div>
+        <div class="overview-cards">
+          <div class="kpi">
+            <div class="k">Ingress p95(ms)</div>
+            <div class="v">{{ overview.downstream_write_quality?.gateway_ingress?.ingress_total_p95_ms || 0 }}</div>
+            <div class="sub">dispatch: {{ overview.downstream_write_quality?.gateway_ingress?.dispatch_p95_ms || 0 }} / member_check: {{ overview.downstream_write_quality?.gateway_ingress?.member_check_p95_ms || 0 }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k">Push 成功率</div>
+            <div class="v">{{ Number((overview.downstream_write_quality?.gateway_push?.success_rate || 0) * 100).toFixed(2) }}%</div>
+            <div class="sub">ok: {{ overview.downstream_write_quality?.gateway_push?.ok_total || 0 }} / fail: {{ overview.downstream_write_quality?.gateway_push?.fail_total || 0 }}</div>
+          </div>
+        </div>
         <table class="simple-table" v-if="overview.message_pipeline && overview.message_pipeline.length">
           <thead><tr><th>topic</th><th>produce_rate</th><th>consume_rate</th><th>produce_total</th><th>consume_total</th><th>retry_count</th><th>dlq_count</th></tr></thead>
           <tbody>
@@ -129,6 +227,12 @@ window.ADMIN_TEMPLATE = `
         <h3>查询结果</h3>
         <span class="muted">共 {{ items.length }} 条</span>
       </div>
+      <div class="overview-cards">
+        <div class="kpi"><div class="k">总条数</div><div class="v">{{ logStats.total }}</div></div>
+        <div class="kpi"><div class="k">错误</div><div class="v">{{ logStats.error }}</div></div>
+        <div class="kpi"><div class="k">告警</div><div class="v">{{ logStats.warn }}</div></div>
+        <div class="kpi"><div class="k">服务数</div><div class="v">{{ logStats.services }}</div></div>
+      </div>
       <div class="list">
         <div class="item" v-for="(it, idx) in items" :key="'log-'+idx">
           <div class="line">
@@ -145,6 +249,10 @@ window.ADMIN_TEMPLATE = `
             <span>gid: {{ it.group_id || '-' }}</span>
             <span>code: {{ it.error_code || '-' }}</span>
           </div>
+          <details>
+            <summary>原始字段</summary>
+            <pre class="raw">{{ JSON.stringify(it, null, 2) }}</pre>
+          </details>
         </div>
         <div class="empty" v-if="items.length===0">暂无日志数据</div>
       </div>
@@ -194,32 +302,10 @@ window.ADMIN_TEMPLATE = `
     </div>
   </section>
 
-  <section class="main" v-else>
-    <div class="panel full">
-      <div class="head">
-        <h3>服务健康</h3>
-        <div>
-          <span class="muted">更新时间：{{ healthGeneratedAt || '-' }}</span>
-          <button style="margin-left:10px" @click="safeCall(() => loadHealth(), '刷新健康状态失败')">刷新</button>
-        </div>
-      </div>
-      <div class="health-grid">
-        <div class="health-card" v-for="s in healthServices" :key="s.id">
-          <div class="row">
-            <div class="name">{{ s.name }}</div>
-            <span class="badge" :class="s.status==='up' ? 'ok' : 'down'">{{ s.status || 'unknown' }}</span>
-          </div>
-          <div class="sub">URL: {{ s.url }}</div>
-          <div class="sub">延迟: {{ s.latency_ms }} ms</div>
-          <div class="err" v-if="s.error">{{ s.error }}</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <div class="global-msg" v-if="loading || error">
     <span v-if="loading">加载中...</span>
     <span v-if="error" class="err">{{ error }}</span>
   </div>
+  <div class="spark-tooltip" v-if="sparkTooltip.show" :style="{left: sparkTooltip.left + 'px', top: sparkTooltip.top + 'px'}">{{ sparkTooltip.text }}</div>
 </div>
 `;

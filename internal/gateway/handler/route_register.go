@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	authhandler "pim/internal/auth/handler"
@@ -20,9 +23,31 @@ func (s *HTTPServer) RegisterRoutes(r *gin.Engine) {
 	s.registerConversationRoutes(authGroup)
 	s.registerGroupRoutes(authGroup)
 	s.registerFileRoutes(authGroup)
-	s.registerLogRoutes(authGroup)
+	s.registerLogRoutes(publicGroup)
 	s.registerPublicAdminRoutes(publicGroup)
 	s.registerAdminRoutes(authGroup)
+	s.captureAPIRouteCatalog(r)
+}
+
+func (s *HTTPServer) captureAPIRouteCatalog(r *gin.Engine) {
+	seen := make(map[string]struct{})
+	routes := make([]string, 0)
+	for _, ri := range r.Routes() {
+		path := strings.TrimSpace(ri.Path)
+		if path == "" {
+			continue
+		}
+		if !strings.HasPrefix(path, "/api/") {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		routes = append(routes, path)
+	}
+	sort.Strings(routes)
+	s.apiRouteCatalog = routes
 }
 
 func (s *HTTPServer) registerUserAndFriendRoutes(authGroup *gin.RouterGroup) {
@@ -65,10 +90,10 @@ func (s *HTTPServer) registerFileRoutes(authGroup *gin.RouterGroup) {
 	authGroup.GET("/files/:id", s.handleFileGet)
 }
 
-func (s *HTTPServer) registerLogRoutes(authGroup *gin.RouterGroup) {
-	authGroup.GET("/logs/trace/:trace_id", s.handleLogsByTrace)
-	authGroup.GET("/logs/search", s.handleLogsByEvent)
-	authGroup.GET("/logs/filter", s.handleLogsFilter)
+func (s *HTTPServer) registerLogRoutes(publicGroup *gin.RouterGroup) {
+	publicGroup.GET("/logs/trace/:trace_id", s.handleLogsByTrace)
+	publicGroup.GET("/logs/search", s.handleLogsByEvent)
+	publicGroup.GET("/logs/filter", s.handleLogsFilter)
 }
 
 func (s *HTTPServer) registerAdminRoutes(authGroup *gin.RouterGroup) {

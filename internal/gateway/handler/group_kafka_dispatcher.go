@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"pim/internal/config"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
 type groupKafkaTask struct {

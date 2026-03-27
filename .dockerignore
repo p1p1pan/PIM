@@ -1,0 +1,11 @@
+.git
+.cursor
+**/.git
+**/node_modules
+**/dist
+**/*.md
+deployments/k8s
+deployments/observability
+doc
+*.log
+**/_tmp

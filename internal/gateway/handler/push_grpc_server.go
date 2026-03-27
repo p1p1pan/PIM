@@ -11,7 +11,7 @@ import (
 	conversationhandler "pim/internal/conversation/handler"
 	"pim/internal/conversation/model"
 	pbgateway "pim/internal/gateway/pb"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 	pbgroup "pim/proto/group/v1"
 
 	"google.golang.org/protobuf/encoding/protojson"

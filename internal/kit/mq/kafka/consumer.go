@@ -7,7 +7,7 @@ import (
 
 	"github.com/Shopify/sarama"
 	"pim/internal/config"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 func applyHighThroughputConsumerConfig(cfg *sarama.Config) {
@@ -18,16 +18,19 @@ func applyHighThroughputConsumerConfig(cfg *sarama.Config) {
 	if buf < 64 {
 		buf = 256
 	}
+	// ChannelBufferSize 过小会在高吞吐时触发反压，先给出安全下限。
 	cfg.ChannelBufferSize = buf
 	maxB := config.KafkaConsumerFetchMaxBytes
 	if maxB < 4096 {
 		maxB = 1048576
 	}
+	// Fetch.Max 过小会提升 broker 往返次数，吞吐和 CPU 都会受影响。
 	cfg.Consumer.Fetch.Max = int32(maxB)
 	waitMs := config.KafkaConsumerMaxWaitTimeMs
 	if waitMs < 1 {
 		waitMs = 100
 	}
+	// MaxWaitTime 决定 broker 端聚合等待，值越小延迟更低但吞吐通常更差。
 	cfg.Consumer.MaxWaitTime = time.Duration(waitMs) * time.Millisecond
 }
 
@@ -146,6 +149,7 @@ func StartConsumerGroup(ctx context.Context, brokers []string, groupID string, t
 
 	log.Printf("kafka: consuming topics=%v with group=%s", topics, groupID)
 	cgh := &consumerGroupHandler{ctx: ctx, handler: handler}
+	// group.Consume 在 rebalance 后会返回并再次进入循环，这属于预期行为。
 	for ctx.Err() == nil {
 		if err := group.Consume(ctx, topics, cgh); err != nil {
 			log.Printf("kafka: consumer group consume failed group=%s topics=%v err=%v", groupID, topics, err)

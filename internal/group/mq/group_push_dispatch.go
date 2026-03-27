@@ -11,7 +11,7 @@ import (
 	pbgateway "pim/internal/gateway/pb"
 	groupmodel "pim/internal/group/model"
 	logmodel "pim/internal/log/model"
-	"pim/internal/mq/kafka"
+	"pim/internal/kit/mq/kafka"
 )
 
 // pushSavedGroupMessagesBatch 将同 group 批量落库结果按 node 分发到 gateway。

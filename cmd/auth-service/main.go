@@ -14,7 +14,7 @@ import (
 	authhandler "pim/internal/auth/handler"
 	pbauth "pim/internal/auth/pb"
 	"pim/internal/config"
-	observemetrics "pim/internal/observability/metrics"
+	observemetrics "pim/internal/kit/observability/metrics"
 	pbuser "pim/internal/user/pb"
 )
 
@@ -31,7 +31,7 @@ func main() {
 	defer rdb.Close()
 
 	// 2) 连接 user-service，供鉴权时查询用户信息。
-	userConn, err := grpc.NewClient("localhost:9011", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	userConn, err := grpc.NewClient(config.UserServiceGRPCTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to user service: %v", err)
 	}
@@ -41,7 +41,7 @@ func main() {
 	// 3) 启动 gRPC 服务（Auth 主能力）。
 	grpcServer := grpc.NewServer()
 	pbauth.RegisterAuthServiceServer(grpcServer, authhandler.NewGRPCAuthServer(userClient))
-	listener, err := net.Listen("tcp", ":9005")
+	listener, err := net.Listen("tcp", config.AuthGRPCAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -62,8 +62,8 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	log.Println("auth-service gRPC :9005, health :9000")
-	if err := r.Run(":9000"); err != nil {
+	log.Printf("auth-service gRPC %s, health %s", config.AuthGRPCAddr, config.AuthHTTPAddr)
+	if err := r.Run(config.AuthHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

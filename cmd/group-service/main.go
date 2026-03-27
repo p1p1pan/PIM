@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"pim/internal/config"
-	pimdb "pim/internal/db"
+	pimdb "pim/internal/kit/db"
 	pbgateway "pim/internal/gateway/pb"
 	grouphandler "pim/internal/group/handler"
 	groupmodel "pim/internal/group/model"
@@ -20,8 +20,8 @@ import (
 	pbgroup "pim/internal/group/pb"
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
-	"pim/internal/mq/kafka"
-	observemetrics "pim/internal/observability/metrics"
+	"pim/internal/kit/mq/kafka"
+	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 func main() {
