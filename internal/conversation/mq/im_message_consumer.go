@@ -2,6 +2,7 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -60,6 +61,27 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 	}
 	saved, created, err := svc.SendMessageIdempotentBatch(inputs)
 	if err != nil {
+		// 单批内只要有一条“非好友”会导致批失败并反复重试；降级为逐条处理，避免 Kafka 死循环刷错。
+		if errors.Is(err, conversationservice.ErrNotFriends) {
+			saved = make([]*model.Message, len(inputs))
+			created = make([]bool, len(inputs))
+			var skipped int
+			for i, in := range inputs {
+				m, c, oneErr := svc.SendMessageIdempotent(in.FromID, in.ToID, in.Content, in.ClientMsgID)
+				if oneErr != nil {
+					if errors.Is(oneErr, conversationservice.ErrNotFriends) {
+						skipped++
+						continue
+					}
+					return oneErr
+				}
+				saved[i] = m
+				created[i] = c
+			}
+			if skipped > 0 {
+				log.Printf("im-message batch skipped not-friend messages=%d/%d", skipped, len(inputs))
+			}
+		} else {
 		km := kms[0]
 		emitConsumerLog(producer, logmodel.Log{
 			TS:        time.Now(),
@@ -72,6 +94,7 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 			ErrorCode: "persist_failed",
 		})
 		return err
+		}
 	}
 
 	var pushBatch []model.KafkaMessage

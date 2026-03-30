@@ -1,7 +1,7 @@
 param(
     [string]$Namespace = "pim",
     [int]$FrontendLocalPort = 8088,
-    [int]$GatewayLocalPort = 8080
+    [int]$GatewayLocalPort = 26080
 )
 
 $ErrorActionPreference = "Stop"

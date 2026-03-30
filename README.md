@@ -91,7 +91,7 @@ go run .\cmd\all
 访问前端：
 
 - 本地静态文件：`web/index.html`
-- 网关入口：默认 `http://localhost:8080`
+- 网关入口：默认 `http://localhost:26080`
 
 ### 方式 B：Minikube 全量部署
 

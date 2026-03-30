@@ -29,8 +29,8 @@ func main() {
 	logmq.StartConsumers(ctx, es, config.KafkaBrokerList, config.LogTopic)
 
 	// 3) 暴露 log 查询 HTTP API（由 gateway 统一代理给前端）。
-	log.Println("log-service http :9016")
-	if err := r.Run(":9016"); err != nil {
+	log.Printf("log-service http %s", config.LogHTTPAddr)
+	if err := r.Run(config.LogHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

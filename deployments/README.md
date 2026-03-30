@@ -43,7 +43,7 @@ docker compose -f .\deployments\docker-compose\docker-compose.infra.yml stop
 ### 注意点
 
 - `cmd/all` 会自动读取 `deployments/docker-compose/.env`，所有端口与路由都由 env 控制。
-- 本地 `file://` 打开前端时会回落到 `http://localhost:8080` 网关。
+- 本地 `file://` 打开前端时会回落到 `http://localhost:26080` 网关。
 
 ---
 
@@ -92,6 +92,7 @@ kubectl apply -f .\deployments\k8s\apps\
 ### 这块怎么验证
 
 - `kubectl get pods -n pim` 业务 Pod 全部 `Running`。
+- 网关统一入口：`http://127.0.0.1:26080`。
 - 浏览器访问 `http://127.0.0.1:8088/pages/login.html`。
 - 登录和收发消息正常。
 

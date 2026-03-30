@@ -200,11 +200,11 @@ func (s *HTTPServer) handleAdminHealth(c *gin.Context) {
 	}
 	targets := []svc{
 		{ID: "gateway", Name: "Gateway", URL: "self"},
-		{ID: "auth", Name: "Auth Service", URL: "http://localhost:9000/health"},
-		{ID: "user", Name: "User Service", URL: "http://localhost:9001/health"},
-		{ID: "friend", Name: "Friend Service", URL: "http://localhost:9002/health"},
-		{ID: "conversation", Name: "Conversation Service", URL: "http://localhost:9003/health"},
-		{ID: "group", Name: "Group Service", URL: "http://localhost:9004/health"},
+		{ID: "auth", Name: "Auth Service", URL: config.AdminHealthAuthURL},
+		{ID: "user", Name: "User Service", URL: config.AdminHealthUserURL},
+		{ID: "friend", Name: "Friend Service", URL: config.AdminHealthFriendURL},
+		{ID: "conversation", Name: "Conversation Service", URL: config.AdminHealthConversationURL},
+		{ID: "group", Name: "Group Service", URL: config.AdminHealthGroupURL},
 		{ID: "file", Name: "File Service", URL: s.fileServiceBaseURL + "/health"},
 		{ID: "log", Name: "Log Service", URL: s.logServiceBaseURL + "/health"},
 	}

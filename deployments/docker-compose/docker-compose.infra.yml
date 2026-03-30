@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: pim
       POSTGRES_DB: pim
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pim_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -114,7 +114,7 @@ services:
       {
         \"CORSRules\": [
           {
-            \"AllowedOrigins\": [\"http://localhost:8080\"],
+            \"AllowedOrigins\": [\"http://localhost:26080\"],
             \"AllowedMethods\": [\"GET\", \"PUT\", \"HEAD\"],
             \"AllowedHeaders\": [\"*\"],
             \"ExposeHeaders\": [\"ETag\", \"Content-Length\", \"Content-Type\"],
@@ -191,7 +191,7 @@ services:
     container_name: pim-gateway-lb
     restart: unless-stopped
     ports:
-      - "18080:18080"
+      - "28080:18080"
     volumes:
       - ../docker/nginx.gateway-lb.conf:/etc/nginx/nginx.conf:ro
 

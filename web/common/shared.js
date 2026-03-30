@@ -6,7 +6,7 @@ function resolveAPIBase() {
     return "";
   }
   // For file:// local open, keep explicit localhost gateway fallback.
-  return "http://localhost:8080";
+  return "http://localhost:26080";
 }
 
 const API_BASE = resolveAPIBase();

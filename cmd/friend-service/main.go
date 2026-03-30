@@ -49,7 +49,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb))
 	pbfriend.RegisterFriendServiceServer(grpcServer, friendhandler.NewGRPCFriendServer(friendSvc))
-	listener, err := net.Listen("tcp", ":9012")
+	listener, err := net.Listen("tcp", config.FriendGRPCAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -64,8 +64,8 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	log.Println("friend-service gRPC :9012, health :9002")
-	if err := r.Run(":9002"); err != nil {
+	log.Printf("friend-service gRPC %s, health %s", config.FriendGRPCAddr, config.FriendHTTPAddr)
+	if err := r.Run(config.FriendHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

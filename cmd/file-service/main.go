@@ -103,7 +103,7 @@ func main() {
 		}
 	}()
 
-	lis, err := net.Listen("tcp", ":9015")
+	lis, err := net.Listen("tcp", config.FileGRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to listen file grpc: %v", err)
 	}
@@ -114,8 +114,8 @@ func main() {
 	}()
 
 	httpServer.RegisterRoutes(r)
-	log.Println("file-service gRPC :9015, health :9006")
-	if err := r.Run(":9006"); err != nil {
+	log.Printf("file-service gRPC %s, health %s", config.FileGRPCAddr, config.FileHTTPAddr)
+	if err := r.Run(config.FileHTTPAddr); err != nil {
 		log.Fatal(err)
 	}
 }

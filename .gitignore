@@ -42,3 +42,6 @@ test/bench/
 test/bench/output/
 test/bench/**/*.log
 test/bench/**/*.tmp
+
+# test code and artifacts (do not commit / push)
+test/
