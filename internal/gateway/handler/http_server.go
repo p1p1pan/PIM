@@ -45,6 +45,7 @@ type HTTPServer struct {
 	logServiceBaseURL  string
 	fileServiceBaseURL string
 	apiRouteCatalog    []string
+	loginInflightSem   chan struct{}
 }
 
 // NewHTTPServer 创建 Gateway HTTPServer。
@@ -80,6 +81,9 @@ func NewHTTPServer(
 		nodeID:             nodeID,
 		logServiceBaseURL:  strings.TrimRight(logServiceBaseURL, "/"),
 		fileServiceBaseURL: strings.TrimRight(fileServiceBaseURL, "/"),
+	}
+	if config.GatewayLoginMaxInflight > 0 {
+		srv.loginInflightSem = make(chan struct{}, config.GatewayLoginMaxInflight)
 	}
 	if config.GatewayGroupMemberPrewarmEnabled && redisClient != nil {
 		go func() {
@@ -164,6 +168,13 @@ func (s *HTTPServer) handleLogin(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !s.tryAcquireLoginInflight() {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "login busy, please retry",
+		})
+		return
+	}
+	defer s.releaseLoginInflight()
 	resp, err := s.authClient.Login(ctxWithTrace(c), &pbauth.LoginRequest{Username: req.Username, Password: req.Password})
 	if err != nil {
 		if st, ok := status.FromError(err); ok {
@@ -180,6 +191,28 @@ func (s *HTTPServer) handleLogin(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": resp.GetMessage(), "user": gin.H{"id": resp.GetUserId(), "username": resp.GetUsername()}, "token": resp.GetAccessToken()})
+}
+
+func (s *HTTPServer) tryAcquireLoginInflight() bool {
+	if s.loginInflightSem == nil {
+		return true
+	}
+	select {
+	case s.loginInflightSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *HTTPServer) releaseLoginInflight() {
+	if s.loginInflightSem == nil {
+		return
+	}
+	select {
+	case <-s.loginInflightSem:
+	default:
+	}
 }
 
 // handleRegister 处理注册请求并调用 User gRPC。

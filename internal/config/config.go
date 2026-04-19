@@ -58,6 +58,10 @@ var (
 	// Gateway 鉴权中间件本地短缓存（token -> uid），降低高并发下每请求 ValidateToken gRPC 开销。
 	GatewayAuthCacheEnabled = getenvBool("GATEWAY_AUTH_CACHE_ENABLED", true)
 	GatewayAuthCacheTTLms   = getenvInt("GATEWAY_AUTH_CACHE_TTL_MS", 5000)
+	// Gateway 登录 in-flight 上限（0 表示不限制）。用于控制同时处理的登录请求数。
+	GatewayLoginMaxInflight = getenvInt("GATEWAY_LOGIN_MAX_INFLIGHT", 0)
+	// 用户密码哈希成本（bcrypt cost，4~31）。值越小越快，但安全性越弱。
+	UserPasswordBcryptCost = getenvInt("USER_PASSWORD_BCRYPT_COST", 10)
 
 	KafkaBrokers    = getenv("KAFKA_BROKERS", "localhost:9092")
 	KafkaBrokerList = parseCSV(KafkaBrokers)
@@ -144,6 +148,8 @@ var (
 	AdminHealthFriendURL       = getenv("ADMIN_HEALTH_FRIEND_URL", "http://localhost:26002/health")
 	AdminHealthConversationURL = getenv("ADMIN_HEALTH_CONVERSATION_URL", "http://localhost:26003/health")
 	AdminHealthGroupURL        = getenv("ADMIN_HEALTH_GROUP_URL", "http://localhost:26004/health")
+	// 观测聚合使用的 Prometheus 查询地址（用于跨 gateway 实例汇总 QPS）。
+	PrometheusQueryURL = getenv("PROMETHEUS_QUERY_URL", "http://localhost:9090")
 	LogTopic                   = getenv("LOG_TOPIC", "log-topic")
 	LogInfoSamplePct           = clampPct(getenvInt("LOG_INFO_SAMPLE_PCT", 100))
 

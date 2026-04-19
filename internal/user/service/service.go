@@ -5,6 +5,7 @@ import (
 	"time"
 
 	authsvc "pim/internal/auth/service"
+	"pim/internal/config"
 	"pim/internal/user/model"
 	"pim/internal/user/repo"
 
@@ -33,7 +34,7 @@ func (s *Service) Register(username, password string) (*model.User, error) {
 	if count > 0 {
 		return nil, errors.New("username already exists")
 	}
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), resolveBcryptCost())
 	if err != nil {
 		return nil, err
 	}
@@ -76,4 +77,15 @@ func (s *Service) GetByID(id uint) (*model.User, error) {
 	}
 	u.Password = ""
 	return u, nil
+}
+
+func resolveBcryptCost() int {
+	c := config.UserPasswordBcryptCost
+	if c < bcrypt.MinCost {
+		return bcrypt.MinCost
+	}
+	if c > bcrypt.MaxCost {
+		return bcrypt.MaxCost
+	}
+	return c
 }

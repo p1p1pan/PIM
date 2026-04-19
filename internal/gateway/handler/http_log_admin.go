@@ -315,15 +315,17 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 	apiQuality = mergeAPIQualityWithRouteCatalog(apiQuality, s.apiRouteCatalog)
 	messagePipeline := buildMessagePipeline(metricFamilies)
 	connectRate, disconnectRate := fillRateSnapshots(metricFamilies, apiQuality, messagePipeline)
+	// 优先使用 Prometheus 聚合 route qps（跨所有 gateway 实例）；失败则回退本地瞬时差分。
+	overlayAPIQPSFromPrometheus(c.Request.Context(), apiQuality)
 	windowDur := parseOverviewWindow(c.Query("window"))
 	appendAPITimeseries(apiQuality)
-	// API 质量表展示窗口聚合值，而非某个瞬时点/全量累计值。
-	applyAPIQualityWindowAggregates(apiQuality, windowDur)
+	// 入口QPS卡片/折线使用瞬时差分值（窗口只控制展示区间，不改变点值口径）。
+	ingressQPS := computeIngressQPS(apiQuality)
+	// api_quality 统一使用瞬时口径；window 仅用于 timeseries 展示区间。
 	sloOverview := buildSLOOverview(apiQuality, messagePipeline, downCount, metricFamilies)
 	alertsOverview := buildAlertsOverview(downCount, messagePipeline, sloOverview)
 	downstreamWriteQuality := buildDownstreamWriteQuality(metricFamilies, messagePipeline)
 	nonAdminErrorRate := computeNonAdminErrorRate(apiQuality)
-	ingressQPS := computeIngressQPS(apiQuality)
 	pushSuccessRate := 0.0
 	if gp, ok := downstreamWriteQuality["gateway_push"].(gin.H); ok {
 		if v, ok2 := gp["success_rate"].(float64); ok2 {
@@ -367,6 +369,80 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 		"slo_overview":             sloOverview,
 		"generated_at":             time.Now().Format(time.RFC3339),
 	})
+}
+
+type promInstantQueryResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Metric map[string]string `json:"metric"`
+			Value  []interface{}     `json:"value"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
+func overlayAPIQPSFromPrometheus(ctx context.Context, apiQuality []gin.H) {
+	base := strings.TrimRight(strings.TrimSpace(config.PrometheusQueryURL), "/")
+	if base == "" {
+		return
+	}
+	expr := `sum by (route) (rate(pim_http_requests_total{service="gateway"}[1m]))`
+	q := url.Values{}
+	q.Set("query", expr)
+	u := base + "/api/v1/query?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	var pr promInstantQueryResponse
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return
+	}
+	if pr.Status != "success" {
+		return
+	}
+	routeQPS := make(map[string]float64, len(pr.Data.Result))
+	for _, r := range pr.Data.Result {
+		route := strings.TrimSpace(r.Metric["route"])
+		if route == "" || len(r.Value) < 2 {
+			continue
+		}
+		valStr, ok := r.Value[1].(string)
+		if !ok {
+			continue
+		}
+		v, err := strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			continue
+		}
+		routeQPS[route] = v
+	}
+	if len(routeQPS) == 0 {
+		return
+	}
+	for _, item := range apiQuality {
+		route := strings.TrimSpace(fmt.Sprint(item["route"]))
+		if route == "" {
+			continue
+		}
+		if v, ok := routeQPS[route]; ok {
+			item["qps"] = math.Round(v*1000) / 1000
+		}
+	}
 }
 
 func computeIngressQPS(apiQuality []gin.H) float64 {
