@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // 配置信息：环境变量优先，未设置时回落默认值。
@@ -130,18 +132,15 @@ var (
 	GatewayNodeID          = getenv("GATEWAY_NODE_ID", "gateway-1")
 	ConversationHTTPAddr   = getenv("CONVERSATION_HTTP_ADDR", ":26003")
 	ConversationGRPCAddr   = getenv("CONVERSATION_GRPC_ADDR", ":26013")
-	GroupHTTPAddr          = getenv("GROUP_HTTP_ADDR", ":26004")
-	GroupGRPCAddr          = getenv("GROUP_GRPC_ADDR", ":26014")
-	GroupServiceGRPCTarget = getenv("GROUP_SERVICE_GRPC_TARGET", "localhost:26014")
-	GatewayPushGRPCTarget  = getenv("GATEWAY_PUSH_GRPC_TARGET", "localhost:26090")
-	// 多 gateway PushService 目标映射，格式：gateway-1=localhost:8090,gateway-2=localhost:8091
-	GatewayPushGRPCTargets = getenv("GATEWAY_PUSH_GRPC_TARGETS", "")
-	// 下游 gRPC 地址（Kubernetes 内用 Service DNS，例如 user-service:9011）。
-	AuthServiceGRPCTarget         = getenv("AUTH_SERVICE_GRPC_TARGET", "localhost:26005")
-	UserServiceGRPCTarget         = getenv("USER_SERVICE_GRPC_TARGET", "localhost:26011")
-	FriendServiceGRPCTarget       = getenv("FRIEND_SERVICE_GRPC_TARGET", "localhost:26012")
-	ConversationServiceGRPCTarget = getenv("CONVERSATION_SERVICE_GRPC_TARGET", "localhost:26013")
-	FileServiceGRPCTarget         = getenv("FILE_SERVICE_GRPC_TARGET", "localhost:26015")
+	GroupHTTPAddr = getenv("GROUP_HTTP_ADDR", ":26004")
+	GroupGRPCAddr = getenv("GROUP_GRPC_ADDR", ":26014")
+
+	// etcd：服务注册与 gRPC 发现（唯一路径）。
+	EtcdEndpoints   = getenv("ETCD_ENDPOINTS", "127.0.0.1:2379")
+	EtcdKeyPrefix   = getenv("ETCD_KEY_PREFIX", "/pim/v1")
+	EtcdLeaseTTLSec = getenvInt("ETCD_LEASE_TTL_SEC", 10)
+	// SERVICE_INSTANCE_ID 为空时进程内自动生成（多副本建议显式注入稳定 id）。
+	ServiceInstanceID = getenv("SERVICE_INSTANCE_ID", "")
 	// 网关管理后台聚合探活用的各服务 HTTP /health（集群内需可解析）。
 	AdminHealthAuthURL         = getenv("ADMIN_HEALTH_AUTH_URL", "http://localhost:26000/health")
 	AdminHealthUserURL         = getenv("ADMIN_HEALTH_USER_URL", "http://localhost:26001/health")
@@ -214,4 +213,53 @@ func parseCSV(raw string) []string {
 		return []string{"localhost:9092"}
 	}
 	return out
+}
+
+// EtcdEndpointList 解析 ETCD_ENDPOINTS（逗号分隔）。
+func EtcdEndpointList() []string {
+	out := parseCSV(EtcdEndpoints)
+	if len(out) == 0 {
+		return []string{"127.0.0.1:2379"}
+	}
+	return out
+}
+
+// EffectiveAdvertiseGRPCAddr 供写入 etcd 的对外 gRPC 拨号地址。
+func EffectiveAdvertiseGRPCAddr(listenAddr string) string {
+	if v := strings.TrimSpace(os.Getenv("SERVICE_ADVERTISE_GRPC_ADDR")); v != "" {
+		return v
+	}
+	if pod := strings.TrimSpace(getenv("POD_IP", "")); pod != "" {
+		if p, ok := grpcListenPort(listenAddr); ok {
+			return pod + ":" + p
+		}
+	}
+	la := strings.TrimSpace(listenAddr)
+	if la == "" {
+		return ""
+	}
+	if strings.HasPrefix(la, ":") {
+		return "127.0.0.1" + la
+	}
+	return la
+}
+
+func grpcListenPort(listenAddr string) (string, bool) {
+	la := strings.TrimSpace(listenAddr)
+	if la == "" {
+		return "", false
+	}
+	if i := strings.LastIndex(la, ":"); i >= 0 && i+1 < len(la) {
+		return la[i+1:], true
+	}
+	return "", false
+}
+
+// ServiceInstanceIDOrGenerated 返回稳定或生成的实例 id（用于 etcd 键后缀）。
+func ServiceInstanceIDOrGenerated() string {
+	if id := strings.TrimSpace(ServiceInstanceID); id != "" {
+		return id
+	}
+	h, _ := os.Hostname()
+	return h + "-" + uuid.NewString()[:8]
 }

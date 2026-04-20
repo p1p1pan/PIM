@@ -56,7 +56,7 @@ spec:
           command:
             - sh
             - -c
-            - until nc -z redis 6379 && nc -z kafka 9092 && nc -z auth-service 9005 && nc -z user-service 9011 && nc -z friend-service 9012 && nc -z conversation-service 9013 && nc -z group-service 9014 && nc -z file-service 9015 && nc -z log-service 9016; do sleep 2; done
+            - until nc -z redis 6379 && nc -z kafka 9092 && nc -z etcd 2379 && nc -z auth-service 9005 && nc -z user-service 9011 && nc -z friend-service 9012 && nc -z conversation-service 9013 && nc -z group-service 9014 && nc -z file-service 9015 && nc -z log-service 9016; do sleep 2; done
       containers:
         - name: gateway
           image: pim/gateway:latest
@@ -73,6 +73,14 @@ spec:
                 name: pim-secrets
           env:
             - name: GATEWAY_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SERVICE_INSTANCE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name

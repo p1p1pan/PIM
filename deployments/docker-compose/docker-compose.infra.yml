@@ -1,4 +1,19 @@
 services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    container_name: pim-etcd
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=pim0
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://127.0.0.1:2380
+      - --initial-cluster=pim0=http://127.0.0.1:2380
+    ports:
+      - "2379:2379"
+
   postgres:
     image: postgres:16-alpine
     container_name: pim-postgres
@@ -114,7 +129,7 @@ services:
       {
         \"CORSRules\": [
           {
-            \"AllowedOrigins\": [\"http://localhost:26080\"],
+            \"AllowedOrigins\": [\"http://localhost:26080\", \"http://localhost:28080\"],
             \"AllowedMethods\": [\"GET\", \"PUT\", \"HEAD\"],
             \"AllowedHeaders\": [\"*\"],
             \"ExposeHeaders\": [\"ETag\", \"Content-Length\", \"Content-Type\"],

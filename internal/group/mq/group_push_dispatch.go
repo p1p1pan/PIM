@@ -12,6 +12,7 @@ import (
 	groupmodel "pim/internal/group/model"
 	logmodel "pim/internal/log/model"
 	"pim/internal/kit/mq/kafka"
+	"pim/internal/registry"
 )
 
 // pushSavedGroupMessagesBatch 将同 group 批量落库结果按 node 分发到 gateway。
@@ -21,13 +22,14 @@ import (
 // - 批量 RPC 失败后降级逐条推送，并清理失败用户路由缓存。
 func pushSavedGroupMessagesBatch(
 	ctx context.Context,
-	pushClients map[string]pbgateway.PushServiceClient,
+	pushLookup registry.GatewayPushClientLookup,
 	producer *kafka.Producer,
 	traceID string,
 	list []groupmodel.GroupKafkaMessage,
 	savedMsgs []groupmodel.GroupMessage,
 	routeByUID map[uint64]string,
 ) {
+	pushClients := pushLookup.Snapshot()
 	if len(list) == 0 || len(savedMsgs) == 0 || len(routeByUID) == 0 || len(pushClients) == 0 {
 		return
 	}

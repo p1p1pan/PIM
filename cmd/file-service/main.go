@@ -8,10 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"pim/internal/config"
-	pimdb "pim/internal/kit/db"
 	filehandler "pim/internal/file/handler"
 	filemodel "pim/internal/file/model"
 	filemq "pim/internal/file/mq"
@@ -21,16 +19,26 @@ import (
 	filestorage "pim/internal/file/storage"
 	pbfriend "pim/internal/friend/pb"
 	pbgroup "pim/internal/group/pb"
+	grpcresolver "pim/internal/grpcresolver"
+	pimdb "pim/internal/kit/db"
 	"pim/internal/kit/mq/kafka"
 	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/registry"
 )
 
 func main() {
+	bg := context.Background()
+	cli, err := registry.EtcdClient(bg)
+	if err != nil {
+		log.Fatalf("etcd: %v", err)
+	}
+	defer registry.CloseEtcd()
+
 	r := gin.New()
 	observemetrics.UseGinDefaultMiddleware(r)
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("file-service"))
 	observemetrics.RegisterMetricsRoute(r)
-	// 1) 连接 PostgreSQL，并在启动时完成 File 相关表迁移。
+
 	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -38,7 +46,7 @@ func main() {
 	if err := db.AutoMigrate(&filemodel.File{}, &filemodel.FileScanTask{}); err != nil {
 		log.Fatalf("Failed to migrate file tables: %v", err)
 	}
-	// 2) 初始化对象存储（MinIO）。
+
 	objectStore, err := filestorage.NewStore(
 		context.Background(),
 		config.MinIOEndpoint,
@@ -51,16 +59,15 @@ func main() {
 		log.Fatalf("Failed to init minio store: %v", err)
 	}
 
-	// 3) 组装 service 依赖（repo + group/friend 权限检查）。
 	fileRepo := filerepo.NewFileRepo(db)
-	groupConn, err := grpc.NewClient(config.GroupServiceGRPCTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	groupConn, err := grpcresolver.Dial(bg, registry.LogicalGroup)
 	if err != nil {
 		log.Fatalf("Failed to connect to group service: %v", err)
 	}
 	defer groupConn.Close()
 	groupClient := pbgroup.NewGroupServiceClient(groupConn)
 	groupChecker := fileservice.NewGroupGRPCChecker(groupClient)
-	friendConn, err := grpc.NewClient(config.FriendServiceGRPCTarget, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	friendConn, err := grpcresolver.Dial(bg, registry.LogicalFriend)
 	if err != nil {
 		log.Fatalf("Failed to connect to friend service: %v", err)
 	}
@@ -68,20 +75,16 @@ func main() {
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
 	friendChecker := fileservice.NewFriendGRPCChecker(friendClient)
 	fileSvc := fileservice.NewService(fileRepo, objectStore, groupChecker, friendChecker)
-	// 4) 初始化 Kafka producer（commit 后投递 file-scan）。
 	producer := kafka.NewProducer(kafka.DefaultProducerConfig(config.KafkaBrokerList))
 	defer producer.Close()
 
-	// 5) 启动 gRPC 与 HTTP。
 	grpcServer := grpc.NewServer()
 	pbfile.RegisterFileServiceServer(grpcServer, filehandler.NewGRPCFileServer(fileSvc, producer, objectStore))
 	httpServer := filehandler.NewHTTPServer(fileSvc, producer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// 6) 启动 file-scan 消费者链路。
 	filemq.StartConsumers(ctx, fileSvc, producer, config.KafkaBrokerList)
-	// 7) 周期清理超时 pending_upload，避免长期堆积脏记录。
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -112,6 +115,17 @@ func main() {
 			log.Fatalf("failed to serve file grpc: %v", err)
 		}
 	}()
+
+	adv := config.EffectiveAdvertiseGRPCAddr(config.FileGRPCAddr)
+	if adv == "" {
+		log.Fatalf("file advertise grpc addr empty")
+	}
+	iid := config.ServiceInstanceIDOrGenerated()
+	regCloser, err := registry.RegisterEndpoint(bg, cli, registry.LogicalFile, iid, registry.EndpointRecord{Addr: adv})
+	if err != nil {
+		log.Fatalf("etcd register file: %v", err)
+	}
+	defer regCloser()
 
 	httpServer.RegisterRoutes(r)
 	log.Printf("file-service gRPC %s, health %s", config.FileGRPCAddr, config.FileHTTPAddr)

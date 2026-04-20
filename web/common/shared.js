@@ -5,8 +5,8 @@ function resolveAPIBase() {
   if (window.location.protocol === "http:" || window.location.protocol === "https:") {
     return "";
   }
-  // For file:// local open, keep explicit localhost gateway fallback.
-  return "http://localhost:26080";
+  // For file:// local open：走 Docker 中的 gateway-lb（Nginx），由上游分到各 gateway 实例（见 deployments/docker/nginx.gateway-lb.conf）。
+  return "http://localhost:28080";
 }
 
 const API_BASE = resolveAPIBase();

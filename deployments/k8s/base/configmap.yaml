@@ -29,14 +29,9 @@ data:
   GATEWAY_HTTP_ADDR: :8080
   GATEWAY_PUSH_GRPC_ADDR: :8090
   GATEWAY_NODE_ID: gateway-1
-  AUTH_SERVICE_GRPC_TARGET: auth-service:9005
-  USER_SERVICE_GRPC_TARGET: user-service:9011
-  FRIEND_SERVICE_GRPC_TARGET: friend-service:9012
-  CONVERSATION_SERVICE_GRPC_TARGET: conversation-service:9013
-  FILE_SERVICE_GRPC_TARGET: file-service:9015
-  GROUP_SERVICE_GRPC_TARGET: group-service:9014
-  GATEWAY_PUSH_GRPC_TARGET: gateway:8090
-  GATEWAY_PUSH_GRPC_TARGETS: gateway-0=gateway-0.gateway-headless.pim.svc.cluster.local:8090,gateway-1=gateway-1.gateway-headless.pim.svc.cluster.local:8090
+  ETCD_ENDPOINTS: etcd:2379
+  ETCD_KEY_PREFIX: /pim/v1
+  ETCD_LEASE_TTL_SEC: "10"
   ADMIN_HEALTH_AUTH_URL: http://auth-service:9000/health
   ADMIN_HEALTH_USER_URL: http://user-service:9001/health
   ADMIN_HEALTH_FRIEND_URL: http://friend-service:9002/health
@@ -46,3 +41,8 @@ data:
   CONVERSATION_GRPC_ADDR: :9013
   GROUP_HTTP_ADDR: :9004
   GROUP_GRPC_ADDR: :9014
+  FRIEND_HTTP_ADDR: :9002
+  FRIEND_GRPC_ADDR: :9012
+  FILE_HTTP_ADDR: :9006
+  FILE_GRPC_ADDR: :9015
+  LOG_HTTP_ADDR: :9016

@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	pbauth "pim/internal/auth/pb"
 	pbconversation "pim/internal/conversation/pb"
@@ -21,10 +19,19 @@ import (
 	pbuser "pim/internal/user/pb"
 
 	"pim/internal/config"
+	grpcresolver "pim/internal/grpcresolver"
 	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/registry"
 )
 
 func main() {
+	bg := context.Background()
+	cli, err := registry.EtcdClient(bg)
+	if err != nil {
+		log.Fatalf("etcd: %v", err)
+	}
+	defer registry.CloseEtcd()
+
 	r := gin.New()
 	observemetrics.UseGinDefaultMiddleware(r)
 	r.Use(gatewayhandler.CORSMiddleware())
@@ -32,54 +39,53 @@ func main() {
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("gateway"))
 	observemetrics.RegisterMetricsRoute(r)
 
-	// 1) 初始化 Redis，供在线状态与未读等网关逻辑复用。
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
 		DB:       config.RedisDB,
 	})
-	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+	if err := redisClient.Ping(bg).Err(); err != nil {
 		log.Fatalf("Failed to connect to redis: %v", err)
 	}
 	defer redisClient.Close()
-	// 建立到各后端服务的 gRPC 连接。
-	authConn, err := dialGRPC("auth service", config.AuthServiceGRPCTarget)
+
+	authConn, err := grpcresolver.Dial(bg, registry.LogicalAuth)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer authConn.Close()
 	authClient := pbauth.NewAuthServiceClient(authConn)
-	userConn, err := dialGRPC("user service", config.UserServiceGRPCTarget)
+	userConn, err := grpcresolver.Dial(bg, registry.LogicalUser)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer userConn.Close()
 	userClient := pbuser.NewUserServiceClient(userConn)
-	friendConn, err := dialGRPC("friend service", config.FriendServiceGRPCTarget)
+	friendConn, err := grpcresolver.Dial(bg, registry.LogicalFriend)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer friendConn.Close()
 	friendClient := pbfriend.NewFriendServiceClient(friendConn)
-	conversationConn, err := dialGRPC("conversation service", config.ConversationServiceGRPCTarget)
+	conversationConn, err := grpcresolver.Dial(bg, registry.LogicalConversation)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conversationConn.Close()
 	conversationClient := pbconversation.NewConversationServiceClient(conversationConn)
-	groupConn, err := dialGRPC("group service", config.GroupServiceGRPCTarget)
+	groupConn, err := grpcresolver.Dial(bg, registry.LogicalGroup)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer groupConn.Close()
 	groupClient := pbgroup.NewGroupServiceClient(groupConn)
-	fileConn, err := dialGRPC("file service", config.FileServiceGRPCTarget)
+	fileConn, err := grpcresolver.Dial(bg, registry.LogicalFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer fileConn.Close()
 	fileClient := pbfile.NewFileServiceClient(fileConn)
-	// 创建 HTTP Server 并注入所有下游 gRPC client。
+
 	httpServer := gatewayhandler.NewHTTPServer(
 		authClient,
 		userClient,
@@ -100,32 +106,35 @@ func main() {
 		}
 	}()
 	httpServer.RegisterRoutes(r)
-	gatewayhandler.StartGroupMemberSyncConsumer(context.Background(), config.KafkaBrokerList, config.GatewayNodeID)
+	gatewayhandler.StartGroupMemberSyncConsumer(bg, config.KafkaBrokerList, config.GatewayNodeID)
 
-	// 2) 启动 PushService gRPC：供 conversation/group 消费端做实时下行。
+	pushLis, err := net.Listen("tcp", config.GatewayPushGRPCAddr)
+	if err != nil {
+		log.Fatalf("Failed to listen for PushService: %v", err)
+	}
+	adv := config.EffectiveAdvertiseGRPCAddr(config.GatewayPushGRPCAddr)
+	if adv == "" {
+		log.Fatalf("gateway push advertise addr empty")
+	}
+	pushCloser, err := registry.RegisterEndpoint(bg, cli, registry.LogicalGatewayPush, config.GatewayNodeID, registry.EndpointRecord{
+		Addr:   adv,
+		NodeID: config.GatewayNodeID,
+	})
+	if err != nil {
+		log.Fatalf("etcd register gateway-push: %v", err)
+	}
+	defer pushCloser()
+
 	go func() {
-		lis, err := net.Listen("tcp", config.GatewayPushGRPCAddr)
-		if err != nil {
-			log.Fatalf("Failed to listen for PushService: %v", err)
-		}
 		grpcServer := grpc.NewServer()
 		pbgateway.RegisterPushServiceServer(grpcServer, gatewayhandler.NewPushServiceServer())
-		log.Printf("Gateway PushService gRPC listening on %s (node=%s)", config.GatewayPushGRPCAddr, config.GatewayNodeID)
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve PushService gRPC: %v", err)
+		log.Printf("Gateway PushService gRPC listening on %s (node=%s advertise=%s)", config.GatewayPushGRPCAddr, config.GatewayNodeID, adv)
+		if err := grpcServer.Serve(pushLis); err != nil {
+			log.Fatalf("Failed to serve PushService: %v", err)
 		}
 	}()
 
-	// 3) 启动网关 HTTP 主入口。
 	if err := r.Run(config.GatewayHTTPAddr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-}
-
-func dialGRPC(name, target string) (*grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", name, err)
-	}
-	return conn, nil
 }

@@ -6,22 +6,30 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+
 	"pim/internal/config"
-	pimdb "pim/internal/kit/db"
 	friendhandler "pim/internal/friend/handler"
 	friendmodel "pim/internal/friend/model"
-	observemetrics "pim/internal/kit/observability/metrics"
 	pbfriend "pim/internal/friend/pb"
 	friendrepo "pim/internal/friend/repo"
 	friendservice "pim/internal/friend/service"
+	pimdb "pim/internal/kit/db"
+	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/registry"
 )
 
 func main() {
-	// 1) 初始化 PostgreSQL，承载好友关系与申请状态。
+	bg := context.Background()
+	cli, err := registry.EtcdClient(bg)
+	if err != nil {
+		log.Fatalf("etcd: %v", err)
+	}
+	defer registry.CloseEtcd()
+
 	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -29,13 +37,13 @@ func main() {
 	if err := db.AutoMigrate(&friendmodel.Friend{}, &friendmodel.FriendRequest{}, &friendmodel.Blacklist{}); err != nil {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
-	// 2) 初始化 Redis（好友列表缓存等高频读场景）。
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     config.RedisAddr,
 		Password: config.RedisPassword,
 		DB:       config.RedisDB,
 	})
-	if err := rdb.Ping(context.Background()).Err(); err != nil {
+	if err := rdb.Ping(bg).Err(); err != nil {
 		log.Fatalf("Failed to connect to redis: %v", err)
 	}
 	defer rdb.Close()
@@ -45,7 +53,7 @@ func main() {
 	observemetrics.UseGinDefaultMiddleware(r)
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("friend-service"))
 	observemetrics.RegisterMetricsRoute(r)
-	// 3) 启动 gRPC 服务（Friend 主能力）。
+
 	grpcServer := grpc.NewServer()
 	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb))
 	pbfriend.RegisterFriendServiceServer(grpcServer, friendhandler.NewGRPCFriendServer(friendSvc))
@@ -53,14 +61,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
-	// gRPC 与 HTTP 健康检查分离：gRPC 处理业务，HTTP 仅供探活。
 	go func() {
 		if err := grpcServer.Serve(listener); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
-	// 4) 暴露最小 HTTP（健康检查）。
+	adv := config.EffectiveAdvertiseGRPCAddr(config.FriendGRPCAddr)
+	if adv == "" {
+		log.Fatalf("friend advertise grpc addr empty")
+	}
+	iid := config.ServiceInstanceIDOrGenerated()
+	regCloser, err := registry.RegisterEndpoint(bg, cli, registry.LogicalFriend, iid, registry.EndpointRecord{Addr: adv})
+	if err != nil {
+		log.Fatalf("etcd register friend: %v", err)
+	}
+	defer regCloser()
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

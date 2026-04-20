@@ -14,6 +14,7 @@ import (
 
 	"pim/internal/config"
 	pbgateway "pim/internal/gateway/pb"
+	"pim/internal/registry"
 	groupmodel "pim/internal/group/model"
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
@@ -22,7 +23,7 @@ import (
 )
 
 // StartConsumers 启动 group-message 消费者。
-func StartConsumers(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushClients map[string]pbgateway.PushServiceClient, producer *kafka.Producer, brokers []string) {
+func StartConsumers(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushLookup registry.GatewayPushClientLookup, producer *kafka.Producer, brokers []string) {
 	go func() {
 		bs := config.KafkaGroupMessageBatchSize
 		if bs <= 0 {
@@ -33,7 +34,7 @@ func StartConsumers(ctx context.Context, svc *groupservice.Service, rdb *redis.C
 			bw = 5 * time.Millisecond
 		}
 		err := kafka.StartConsumerGroupBatch(ctx, brokers, config.KafkaGroupMessageGroupID, []string{"group-message"}, bs, bw, func(ctx context.Context, msgs []*sarama.ConsumerMessage) error {
-			return handleGroupMessageBatch(ctx, svc, rdb, pushClients, producer, msgs)
+			return handleGroupMessageBatch(ctx, svc, rdb, pushLookup, producer, msgs)
 		})
 		if err != nil {
 			log.Printf("failed to start group-message consumer: %v", err)
@@ -49,14 +50,14 @@ func StartConsumers(ctx context.Context, svc *groupservice.Service, rdb *redis.C
 	}()
 }
 
-func handleGroupMessageBatch(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushClients map[string]pbgateway.PushServiceClient, producer *kafka.Producer, msgs []*sarama.ConsumerMessage) error {
+func handleGroupMessageBatch(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushLookup registry.GatewayPushClientLookup, producer *kafka.Producer, msgs []*sarama.ConsumerMessage) error {
 	if len(msgs) == 0 {
 		return nil
 	}
 	parallel := config.KafkaGroupMessageBatchParallel
 	if parallel <= 1 || len(msgs) == 1 {
 		for _, msg := range msgs {
-			if err := handleGroupMessage(ctx, svc, rdb, pushClients, producer, msg); err != nil {
+			if err := handleGroupMessage(ctx, svc, rdb, pushLookup, producer, msg); err != nil {
 				return err
 			}
 		}
@@ -133,7 +134,7 @@ func handleGroupMessageBatch(ctx context.Context, svc *groupservice.Service, rdb
 				return
 			}
 			// 同 group 内消息顺序由 savedMsgs 顺序保证；这里按批聚合推送，显著减少 gRPC 往返。
-			pushSavedGroupMessagesBatch(ctx, pushClients, producer, traceID, list, savedMsgs, routeByUID)
+			pushSavedGroupMessagesBatch(ctx, pushLookup, producer, traceID, list, savedMsgs, routeByUID)
 		}(gid, batch, traceID)
 	}
 	wg.Wait()
@@ -201,7 +202,8 @@ func handleGroupMemberSync(ctx context.Context, rdb *redis.Client, producer *kaf
 
 // handleGroupMessage 处理群消息事件：校验并落库，随后向在线成员扇出。
 // 当前实现只向本节点连接做实时推送，跨节点由 ws:conn 的 gateway 前缀做归属判断。
-func handleGroupMessage(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushClients map[string]pbgateway.PushServiceClient, producer *kafka.Producer, msg *sarama.ConsumerMessage) error {
+func handleGroupMessage(ctx context.Context, svc *groupservice.Service, rdb *redis.Client, pushLookup registry.GatewayPushClientLookup, producer *kafka.Producer, msg *sarama.ConsumerMessage) error {
+	pushClients := pushLookup.Snapshot()
 	km, mode, err := groupmodel.DecodeGroupKafkaMessageWithMode(msg.Value)
 	if err != nil {
 		emitConsumerLog(producer, logmodel.Log{

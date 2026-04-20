@@ -14,14 +14,16 @@ import (
 	pbgateway "pim/internal/gateway/pb"
 	logmodel "pim/internal/log/model"
 	"pim/internal/kit/mq/kafka"
+	"pim/internal/registry"
 )
 
 // handleImPushBatch 批量解码后 Pipeline GET ws:conn，并按 gateway 节点聚合后发送批量推送。
 // 注意：当前实现是“按节点顺序发送批次”，而非节点级并行；分区内消息顺序仍由消费模型保证。
-func handleImPushBatch(ctx context.Context, rdb *redis.Client, pushClients map[string]pbgateway.PushServiceClient, producer *kafka.Producer, batch []*sarama.ConsumerMessage) error {
+func handleImPushBatch(ctx context.Context, rdb *redis.Client, pushLookup registry.GatewayPushClientLookup, producer *kafka.Producer, batch []*sarama.ConsumerMessage) error {
 	if len(batch) == 0 {
 		return nil
 	}
+	pushClients := pushLookup.Snapshot()
 	kms := make([]model.KafkaMessage, 0, len(batch))
 	for _, msg := range batch {
 		km, err := model.DecodeKafkaMessage(msg.Value)

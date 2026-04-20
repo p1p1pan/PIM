@@ -35,7 +35,7 @@ spec:
           command:
             - sh
             - -c
-            - until nc -z postgres 5432 && nc -z redis 6379 && nc -z kafka 9092; do sleep 2; done
+            - until nc -z postgres 5432 && nc -z redis 6379 && nc -z kafka 9092 && nc -z etcd 2379; do sleep 2; done
       containers:
         - name: conversation-service
           image: pim/conversation-service:latest
@@ -50,6 +50,15 @@ spec:
                 name: pim-runtime
             - secretRef:
                 name: pim-secrets
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SERVICE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           readinessProbe:
             httpGet:
               path: /health

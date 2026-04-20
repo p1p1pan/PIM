@@ -91,7 +91,7 @@ go run .\cmd\all
 访问前端：
 
 - 本地静态文件：`web/index.html`
-- 网关入口：默认 `http://localhost:26080`
+- 浏览器 API 入口：默认经 Nginx 负载均衡 **`http://localhost:28080`**（`gateway-lb` → 26080/26180）；需与 `go run ./cmd/all`、infra compose 一并启动。
 
 ### 方式 B：Minikube 全量部署
 

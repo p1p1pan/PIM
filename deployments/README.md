@@ -15,7 +15,7 @@
 # 0) 准备环境变量（cmd/all 与单服务都读这些值）
 Copy-Item .\deployments\docker-compose\.env.example .\deployments\docker-compose\.env -Force
 
-# 1) 启动中间件（PostgreSQL/Redis/Kafka/MinIO/ES）
+# 1) 启动中间件（PostgreSQL/Redis/Kafka/MinIO/ES/**etcd**）
 docker compose -f .\deployments\docker-compose\docker-compose.infra.yml up -d
 
 # 2) 启动本地全部服务
@@ -37,13 +37,15 @@ docker compose -f .\deployments\docker-compose\docker-compose.infra.yml stop
 
 ### 验证
 
-- 打开 `web/pages/login.html`。
+- 确认 **`gateway-lb`** 已随 infra compose 启动（宿主 **`http://localhost:28080`** → Nginx → 两台 gateway）。
+- 打开 `web/pages/login.html`（`file://` 时 API 默认指向 **`http://localhost:28080`**）。
 - 登录成功，收发消息正常。
 
 ### 注意点
 
 - `cmd/all` 会自动读取 `deployments/docker-compose/.env`，所有端口与路由都由 env 控制。
-- 本地 `file://` 打开前端时会回落到 `http://localhost:26080` 网关。
+- **etcd** 默认 `ETCD_ENDPOINTS=127.0.0.1:2379`（与 infra compose 中 `2379:2379` 一致）；各服务 gRPC 发现仅走 etcd，不再使用 `*_SERVICE_GRPC_TARGET`。
+- 浏览器应走 **Nginx 入口 `28080`**，由上游 `least_conn` 分到 **26080 / 26180** 两台 gateway；直连单台网关仅排障时使用。
 
 ---
 

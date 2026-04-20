@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"pim/internal/config"
 	pimdb "pim/internal/kit/db"
 	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/registry"
 	userhandler "pim/internal/user/handler"
 	usermodel "pim/internal/user/model"
 	userrepo "pim/internal/user/repo"
@@ -21,7 +23,13 @@ import (
 )
 
 func main() {
-	// 1) 初始化 PostgreSQL 与用户表。
+	bg := context.Background()
+	cli, err := registry.EtcdClient(bg)
+	if err != nil {
+		log.Fatalf("etcd: %v", err)
+	}
+	defer registry.CloseEtcd()
+
 	db, err := pimdb.OpenPostgres()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -30,7 +38,6 @@ func main() {
 		log.Fatalf("Failed to migrate user table: %v", err)
 	}
 
-	// 2) 启动 gRPC 服务（User 主能力）。
 	grpcServer := grpc.NewServer()
 	userSvc := userservice.NewService(userrepo.NewUserRepo(db))
 	pbuser.RegisterUserServiceServer(grpcServer, userhandler.NewGRPCUserServer(userSvc))
@@ -39,13 +46,22 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 	go func() {
-		// gRPC 作为主能力入口，启动失败直接退出。
 		if err := grpcServer.Serve(listener); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
-	// 3) 暴露最小 HTTP（健康检查）。
+	adv := config.EffectiveAdvertiseGRPCAddr(config.UserGRPCAddr)
+	if adv == "" {
+		log.Fatalf("user advertise grpc addr empty")
+	}
+	iid := config.ServiceInstanceIDOrGenerated()
+	regCloser, err := registry.RegisterEndpoint(bg, cli, registry.LogicalUser, iid, registry.EndpointRecord{Addr: adv})
+	if err != nil {
+		log.Fatalf("etcd register user: %v", err)
+	}
+	defer regCloser()
+
 	r := gin.New()
 	observemetrics.UseGinDefaultMiddleware(r)
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("user-service"))
