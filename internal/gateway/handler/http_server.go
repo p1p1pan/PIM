@@ -152,11 +152,31 @@ func (s *HTTPServer) handleWS(c *gin.Context) {
 	connID := uuid.NewString()
 	key := fmt.Sprintf("ws:conn:%d", userID)
 	val := fmt.Sprintf("%s:%s", s.nodeID, connID)
-	// 建立连接归属映射：消费端据此判断是否应由本节点执行实时推送。
-	if err := s.redisClient.Set(context.Background(), key, val, 0).Err(); err != nil {
+	// Round 232：改用 30s TTL，防止网关 kill -9 / panic 后 Redis 留下幽灵路由，
+	// 导致 push consumer 打到已死节点拿 Unavailable 再回退，把 P99 拉高。
+	routeTTL := time.Duration(config.GatewayWSRouteTTLSeconds) * time.Second
+	if err := s.redisClient.Set(context.Background(), key, val, routeTTL).Err(); err != nil {
 		log.Printf("[trace=%v] failed to set ws registry for user %d: %v", traceID, userID, err)
 	}
-	// 连接结束时清理映射，避免“离线用户被误判在线”。
+	// 心跳续期：每 renewSec 通过 EXPIRE 把 TTL 顶回 routeTTL；连接 Close 时随 ctx cancel 退出。
+	// 10s 续期 / 30s TTL 留 3× 冗余，网络短抖不会误判下线。
+	renewCtx, renewCancel := context.WithCancel(c.Request.Context())
+	defer renewCancel()
+	go func() {
+		ticker := time.NewTicker(time.Duration(config.GatewayWSRouteRenewSeconds) * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case <-ticker.C:
+				// 使用独立 ctx，避免连接刚 Close 时最后一次续期被 cancel 打断；
+				// 即便续期偶尔失败，TTL 冗余也能兜底到下次心跳。
+				_ = s.redisClient.Expire(context.Background(), key, routeTTL).Err()
+			}
+		}
+	}()
+	// 正常关闭时仍主动 DEL；异常退出依赖 TTL 自动回收。
 	defer func() { _ = s.redisClient.Del(context.Background(), key).Err() }()
 	conversationhandler.WebSocketHandler(s.conversationClient, s.kafkaProducer)(c)
 }

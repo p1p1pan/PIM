@@ -52,6 +52,16 @@ func (s *HTTPServer) handleSendFriendRequest(c *gin.Context) {
 		Remark:     req.Remark,
 	})
 	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.NotFound:
+				c.JSON(http.StatusNotFound, gin.H{"error": st.Message()})
+				return
+			case codes.FailedPrecondition, codes.InvalidArgument:
+				c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+				return
+			}
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -788,6 +788,7 @@ type GroupMessageItem struct {
 	Content       string                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
 	Seq           uint64                 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
 	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	MentionMeta   string                 `protobuf:"bytes,8,opt,name=mention_meta,json=mentionMeta,proto3" json:"mention_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -869,6 +870,13 @@ func (x *GroupMessageItem) GetCreatedAt() int64 {
 		return x.CreatedAt
 	}
 	return 0
+}
+
+func (x *GroupMessageItem) GetMentionMeta() string {
+	if x != nil {
+		return x.MentionMeta
+	}
+	return ""
 }
 
 type ListGroupMessagesRequest struct {
@@ -1933,7 +1941,7 @@ const file_proto_group_v1_group_proto_rawDesc = "" +
 	"\x15ListUserGroupsRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x04R\x06userId\"A\n" +
 	"\x16ListUserGroupsResponse\x12'\n" +
-	"\x06groups\x18\x01 \x03(\v2\x0f.group.v1.GroupR\x06groups\"\xcd\x01\n" +
+	"\x06groups\x18\x01 \x03(\v2\x0f.group.v1.GroupR\x06groups\"\xf0\x01\n" +
 	"\x10GroupMessageItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\bgroup_id\x18\x02 \x01(\x04R\agroupId\x12 \n" +
@@ -1943,7 +1951,8 @@ const file_proto_group_v1_group_proto_rawDesc = "" +
 	"\acontent\x18\x05 \x01(\tR\acontent\x12\x10\n" +
 	"\x03seq\x18\x06 \x01(\x04R\x03seq\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\a \x01(\x03R\tcreatedAt\"\x83\x01\n" +
+	"created_at\x18\a \x01(\x03R\tcreatedAt\x12!\n" +
+	"\fmention_meta\x18\b \x01(\tR\vmentionMeta\"\x83\x01\n" +
 	"\x18ListGroupMessagesRequest\x12\x19\n" +
 	"\bgroup_id\x18\x01 \x01(\x04R\agroupId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x04R\x06userId\x12\x14\n" +

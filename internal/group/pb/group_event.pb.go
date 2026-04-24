@@ -29,6 +29,7 @@ type GroupKafkaMessage struct {
 	GroupId       uint64                 `protobuf:"varint,3,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
 	FromUserId    uint64                 `protobuf:"varint,4,opt,name=from_user_id,json=fromUserId,proto3" json:"from_user_id,omitempty"`
 	Content       string                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
+	MentionMeta   string                 `protobuf:"bytes,6,opt,name=mention_meta,json=mentionMeta,proto3" json:"mention_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -98,18 +99,26 @@ func (x *GroupKafkaMessage) GetContent() string {
 	return ""
 }
 
+func (x *GroupKafkaMessage) GetMentionMeta() string {
+	if x != nil {
+		return x.MentionMeta
+	}
+	return ""
+}
+
 var File_proto_group_v1_group_event_proto protoreflect.FileDescriptor
 
 const file_proto_group_v1_group_event_proto_rawDesc = "" +
 	"\n" +
-	" proto/group/v1/group_event.proto\x12\bgroup.v1\"\xa0\x01\n" +
+	" proto/group/v1/group_event.proto\x12\bgroup.v1\"\xc3\x01\n" +
 	"\x11GroupKafkaMessage\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x19\n" +
 	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x19\n" +
 	"\bgroup_id\x18\x03 \x01(\x04R\agroupId\x12 \n" +
 	"\ffrom_user_id\x18\x04 \x01(\x04R\n" +
 	"fromUserId\x12\x18\n" +
-	"\acontent\x18\x05 \x01(\tR\acontentB\x1fZ\x1dpim/internal/group/pb;pbgroupb\x06proto3"
+	"\acontent\x18\x05 \x01(\tR\acontent\x12!\n" +
+	"\fmention_meta\x18\x06 \x01(\tR\vmentionMetaB\x1fZ\x1dpim/internal/group/pb;pbgroupb\x06proto3"
 
 var (
 	file_proto_group_v1_group_event_proto_rawDescOnce sync.Once

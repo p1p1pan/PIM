@@ -61,6 +61,7 @@ func toPBGroupMessages(msgs []groupmodel.GroupMessage) []*pbgroup.GroupMessageIt
 			Content:     m.Content,
 			Seq:         m.Seq,
 			CreatedAt:   toUnix(m.CreatedAt),
+			MentionMeta: m.MentionMeta,
 		})
 	}
 	return out

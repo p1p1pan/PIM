@@ -5,10 +5,12 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	"pim/internal/config"
 	pbgateway "pim/internal/gateway/pb"
@@ -127,7 +129,17 @@ func (w *GatewayPushWatcher) rebuild(ctx context.Context, cli *clientv3.Client, 
 			delete(w.conns, node)
 			delete(w.clients, node)
 		}
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Round 232：push 通道是 conv→gateway 的热路径，必须配 keepalive，
+		// 否则空闲期 LB / NAT 会静默剪连接，导致下一批推送卡在握手重连上。
+		// Client Time 必须 >= gateway server EnforcementPolicy.MinTime（10s），否则会收到 GOAWAY(too_many_pings)。
+		conn, err := grpc.NewClient(addr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                30 * time.Second,
+				Timeout:             10 * time.Second,
+				PermitWithoutStream: true,
+			}),
+		)
 		if err != nil {
 			log.Printf("registry: dial gateway-push node=%s addr=%s: %v", node, addr, err)
 			continue

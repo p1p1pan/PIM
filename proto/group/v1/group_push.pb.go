@@ -30,6 +30,7 @@ type GroupPushMessage struct {
 	MessageType   string                 `protobuf:"bytes,4,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
 	Content       string                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
 	Seq           uint64                 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
+	MentionMeta   string                 `protobuf:"bytes,7,opt,name=mention_meta,json=mentionMeta,proto3" json:"mention_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -106,11 +107,18 @@ func (x *GroupPushMessage) GetSeq() uint64 {
 	return 0
 }
 
+func (x *GroupPushMessage) GetMentionMeta() string {
+	if x != nil {
+		return x.MentionMeta
+	}
+	return ""
+}
+
 var File_proto_group_v1_group_push_proto protoreflect.FileDescriptor
 
 const file_proto_group_v1_group_push_proto_rawDesc = "" +
 	"\n" +
-	"\x1fproto/group/v1/group_push.proto\x12\bgroup.v1\"\xb2\x01\n" +
+	"\x1fproto/group/v1/group_push.proto\x12\bgroup.v1\"\xd5\x01\n" +
 	"\x10GroupPushMessage\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x19\n" +
 	"\bgroup_id\x18\x02 \x01(\x04R\agroupId\x12 \n" +
@@ -118,7 +126,8 @@ const file_proto_group_v1_group_push_proto_rawDesc = "" +
 	"fromUserId\x12!\n" +
 	"\fmessage_type\x18\x04 \x01(\tR\vmessageType\x12\x18\n" +
 	"\acontent\x18\x05 \x01(\tR\acontent\x12\x10\n" +
-	"\x03seq\x18\x06 \x01(\x04R\x03seqB\x1cZ\x1apim/proto/group/v1;pbgroupb\x06proto3"
+	"\x03seq\x18\x06 \x01(\x04R\x03seq\x12!\n" +
+	"\fmention_meta\x18\a \x01(\tR\vmentionMetaB\x1cZ\x1apim/proto/group/v1;pbgroupb\x06proto3"
 
 var (
 	file_proto_group_v1_group_push_proto_rawDescOnce sync.Once

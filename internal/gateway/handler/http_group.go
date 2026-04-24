@@ -25,6 +25,7 @@ import (
 	groupmodel "pim/internal/group/model"
 	pbgroup "pim/internal/group/pb"
 	observemetrics "pim/internal/kit/observability/metrics"
+	pbuser "pim/internal/user/pb"
 )
 
 type groupReadyCacheEntry struct {
@@ -1160,12 +1161,35 @@ func (s *HTTPServer) handleSendGroupMessage(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "user is not group member"})
 		return
 	}
+	ctxSend := ctxWithTrace(c)
+	mentionMeta, mmErr := buildGroupMentionMeta(
+		ctxSend, req.Content, groupID,
+		func(ctx context.Context, login string) (uint64, error) {
+			r, e := s.userClient.GetIDByUsername(ctx, &pbuser.GetIDByUsernameRequest{Username: login})
+			if e != nil {
+				return 0, e
+			}
+			return r.GetUserId(), nil
+		},
+		func(ctx context.Context, gid uint, uid uint64) (bool, error) {
+			resp, e := s.groupClient.IsMember(ctx, &pbgroup.IsMemberRequest{GroupId: uint64(gid), UserId: uid})
+			if e != nil {
+				return false, e
+			}
+			return resp.GetIsMember(), nil
+		},
+	)
+	if mmErr != nil {
+		log.Printf("[trace=%s] buildGroupMentionMeta: uid=%d gid=%d err=%v", c.GetString("trace_id"), fromUserID, groupID, mmErr)
+		mentionMeta = groupmodel.EmptyMentionMetaJSON
+	}
 	evt := groupmodel.GroupKafkaMessage{
-		TraceID: c.GetString("trace_id"),
-		EventID: req.ClientMsgID,
-		GroupID: groupID,
-		From:    fromUserID,
-		Content: req.Content,
+		TraceID:     c.GetString("trace_id"),
+		EventID:     req.ClientMsgID,
+		GroupID:     groupID,
+		From:        fromUserID,
+		Content:     req.Content,
+		MentionMeta: mentionMeta,
 	}
 	// 群消息统一走 group-message topic，由 group consumer 负责落库+扇出。
 	// 先用 protobuf 编码，消费者端保留 JSON 兜底解码以兼容旧数据。
@@ -1251,13 +1275,14 @@ func (s *HTTPServer) handleListGroupMessages(c *gin.Context) {
 	list := make([]gin.H, 0, len(resp.GetMessages()))
 	for _, m := range resp.GetMessages() {
 		list = append(list, gin.H{
-			"id":           m.GetId(),
-			"group_id":     m.GetGroupId(),
-			"from_user_id": m.GetFromUserId(),
-			"message_type": m.GetMessageType(),
-			"content":      m.GetContent(),
-			"seq":          m.GetSeq(),
-			"created_at":   m.GetCreatedAt(),
+			"id":            m.GetId(),
+			"group_id":      m.GetGroupId(),
+			"from_user_id":  m.GetFromUserId(),
+			"message_type":  m.GetMessageType(),
+			"content":       m.GetContent(),
+			"seq":           m.GetSeq(),
+			"created_at":    m.GetCreatedAt(),
+			"mention_meta":  m.GetMentionMeta(),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{

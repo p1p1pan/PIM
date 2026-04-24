@@ -62,6 +62,11 @@ var (
 	GatewayAuthCacheTTLms   = getenvInt("GATEWAY_AUTH_CACHE_TTL_MS", 5000)
 	// Gateway 登录 in-flight 上限（0 表示不限制）。用于控制同时处理的登录请求数。
 	GatewayLoginMaxInflight = getenvInt("GATEWAY_LOGIN_MAX_INFLIGHT", 0)
+	// Round 232：ws:conn 路由 TTL 与心跳续期间隔（秒）。
+	// 防止网关 kill -9 / panic 后 Redis 残留"幽灵路由"导致 push 打到死节点。
+	// 建议关系：renew × 3 ≈ ttl，留冗余防网络抖动误判下线。
+	GatewayWSRouteTTLSeconds   = getenvInt("GATEWAY_WS_ROUTE_TTL_SECONDS", 30)
+	GatewayWSRouteRenewSeconds = getenvInt("GATEWAY_WS_ROUTE_RENEW_SECONDS", 10)
 	// 用户密码哈希成本（bcrypt cost，4~31）。值越小越快，但安全性越弱。
 	UserPasswordBcryptCost = getenvInt("USER_PASSWORD_BCRYPT_COST", 10)
 

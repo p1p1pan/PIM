@@ -20,10 +20,11 @@ type GroupRepo struct {
 }
 
 type SaveGroupMessageInput struct {
-	GroupID    uint
-	FromUserID uint
-	Content    string
-	EventID    string
+	GroupID     uint
+	FromUserID  uint
+	Content     string
+	EventID     string
+	MentionMeta string
 }
 
 // NewGroupRepo 创建 GroupRepo。
@@ -112,7 +113,7 @@ func (r *GroupRepo) CreateGroupMessage(msg *model.GroupMessage) error {
 }
 
 // SaveGroupMessageIdempotent 在事务内完成：按 event_id 幂等、按 group 串行分配 seq、落库。
-func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, messageType, content, eventID string) (*model.GroupMessage, error) {
+func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, messageType, content, eventID, mentionMeta string) (*model.GroupMessage, error) {
 	var saved model.GroupMessage
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 先按 event_id 命中幂等记录（重复消费直接返回旧消息）。
@@ -142,6 +143,7 @@ func (r *GroupRepo) SaveGroupMessageIdempotent(groupID, fromUserID uint, message
 			FromUserID:  fromUserID,
 			MessageType: messageType,
 			Content:     content,
+			MentionMeta: model.NormalizeMentionMeta(mentionMeta),
 			Seq:         seq,
 			EventID:     eventID,
 		}
@@ -215,6 +217,7 @@ func (r *GroupRepo) SaveGroupMessageIdempotentBatch(inputs []SaveGroupMessageInp
 				FromUserID:  in.FromUserID,
 				MessageType: "text",
 				Content:     in.Content,
+				MentionMeta: model.NormalizeMentionMeta(in.MentionMeta),
 				Seq:         nextSeq,
 				EventID:     in.EventID,
 			}

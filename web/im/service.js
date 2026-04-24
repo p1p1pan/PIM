@@ -213,6 +213,7 @@ window.buildIMMethods = function buildIMMethods() {
                   file_name: payload.fileName,
                   seq: Number(evt.seq || 0),
                   isMe: senderID === Number(this.currentUser?.id || 0),
+                  mention_meta: evt.mention_meta != null ? String(evt.mention_meta) : "",
                 });
                 if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
                 if (Number(this.selectedGroupId || 0) !== gid) {
@@ -394,6 +395,7 @@ window.buildIMMethods = function buildIMMethods() {
             file_name: payload.fileName,
             seq: Number(m.seq || 0),
             isMe: Number(m.from_user_id || 0) === Number(this.currentUser?.id || 0),
+            mention_meta: m.mention_meta != null ? String(m.mention_meta) : "",
           };
         })(),
       }));
@@ -634,6 +636,58 @@ window.buildIMMethods = function buildIMMethods() {
         this.pendingSyncTimer = null;
         await this.safeCall(() => this.refreshAll(), "轻量刷新失败");
       }, 400);
+    },
+    /** 群聊 @ 分段：仅依据服务端 `mention_meta`（V1）+ content 的 rune 区间；文件/系统消息/非群聊返回 [] */
+    groupMentionSegments(m) {
+      if (!m || m.ui_type === "file" || m.message_type === "system") return [];
+      if (!this.selectedGroupId) return [];
+      const text = String(m.content || "");
+      const chars = Array.from(text);
+      let meta;
+      try {
+        meta = m.mention_meta ? JSON.parse(String(m.mention_meta)) : null;
+      } catch {
+        return [{ type: "plain", text }];
+      }
+      if (!meta || meta.v !== 1 || !Array.isArray(meta.spans)) {
+        return [{ type: "plain", text }];
+      }
+      const myId = Number(this.currentUser?.id || 0);
+      const spans = [...meta.spans].sort((a, b) => Number(a.b) - Number(b.b));
+      const out = [];
+      let cursor = 0;
+      for (const sp of spans) {
+        const b = Number(sp.b);
+        const e = Number(sp.e);
+        if (!Number.isFinite(b) || !Number.isFinite(e) || e <= b) continue;
+        if (b < cursor || b >= chars.length) continue;
+        if (b > cursor) {
+          out.push({ type: "plain", text: chars.slice(cursor, b).join("") });
+        }
+        const end = Math.min(e, chars.length);
+        const mentionText = chars.slice(b, end).join("");
+        if (sp.k === "all") {
+          out.push({ type: "mention", text: mentionText, kind: "all" });
+        } else if (sp.k === "user") {
+          const uid = Number(sp.u);
+          const kind = myId && uid && uid === myId ? "me" : "user";
+          out.push({ type: "mention", text: mentionText, kind });
+        } else {
+          out.push({ type: "plain", text: mentionText });
+        }
+        cursor = end;
+      }
+      if (cursor < chars.length) {
+        out.push({ type: "plain", text: chars.slice(cursor).join("") });
+      }
+      return out.length ? out : [{ type: "plain", text }];
+    },
+    groupMentionClass(seg) {
+      if (!seg || seg.type !== "mention") return "";
+      const k = seg.kind || "user";
+      if (k === "all") return "mention mention-all";
+      if (k === "me") return "mention mention-me";
+      return "mention mention-user";
     },
   };
 };

@@ -122,10 +122,11 @@ func handleGroupMessageBatch(ctx context.Context, svc *groupservice.Service, rdb
 			inputs := make([]grouprepo.SaveGroupMessageInput, 0, len(list))
 			for _, km := range list {
 				inputs = append(inputs, grouprepo.SaveGroupMessageInput{
-					GroupID:    km.GroupID,
-					FromUserID: km.From,
-					Content:    km.Content,
-					EventID:    km.EventID,
+					GroupID:     km.GroupID,
+					FromUserID:  km.From,
+					Content:     km.Content,
+					EventID:     km.EventID,
+					MentionMeta: km.MentionMeta,
 				})
 			}
 			savedMsgs, err := svc.SaveIncomingGroupMessageBatchTrusted(groupID, inputs)
@@ -227,7 +228,7 @@ func handleGroupMessage(ctx context.Context, svc *groupservice.Service, rdb *red
 		traceID = "unknown"
 	}
 	// 成员身份已在网关写入 Kafka 前校验，这里走 trusted 路径避免重复 IsMember 查询。
-	saved, err := svc.SaveIncomingGroupMessageTrusted(km.GroupID, km.From, km.Content, km.EventID)
+	saved, err := svc.SaveIncomingGroupMessageTrusted(km.GroupID, km.From, km.Content, km.EventID, km.MentionMeta)
 	if err != nil {
 		emitConsumerLog(producer, logmodel.Log{
 			TS:        time.Now(),
@@ -257,6 +258,7 @@ func handleGroupMessage(ctx context.Context, svc *groupservice.Service, rdb *red
 		MessageType: saved.MessageType,
 		Content:     saved.Content,
 		Seq:         saved.Seq,
+		MentionMeta: saved.MentionMeta,
 	})
 	routeByUID, err := loadGroupRoutes(ctx, rdb, memberIDs)
 	if err != nil {

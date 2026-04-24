@@ -133,6 +133,7 @@ func pushSavedGroupMessagesBatch(
 			MessageType: saved.MessageType,
 			Content:     saved.Content,
 			Seq:         saved.Seq,
+			MentionMeta: saved.MentionMeta,
 		})
 		pushJSONStr := string(pushJSON)
 		for node, uids := range recipientsByNode {
@@ -165,6 +166,7 @@ func pushSavedGroupMessage(ctx context.Context, pushClient pbgateway.PushService
 		MessageType: saved.MessageType,
 		Content:     saved.Content,
 		Seq:         saved.Seq,
+		MentionMeta: saved.MentionMeta,
 	})
 	items := make([]*pbgateway.PushBatchItem, 0, len(routeByUID))
 	for uid, route := range routeByUID {

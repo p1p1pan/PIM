@@ -4,10 +4,12 @@ import (
 	"context"
 	"log"
 	"net"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	pbauth "pim/internal/auth/pb"
 	pbconversation "pim/internal/conversation/pb"
@@ -126,7 +128,21 @@ func main() {
 	defer pushCloser()
 
 	go func() {
-		grpcServer := grpc.NewServer()
+		// Round 232：10w 连接 + 多 conversation-service 并行批推场景下，
+		// 默认 MaxConcurrentStreams=100 会让 gRPC stream 排队，直接把 push P99 拉高。
+		// Keepalive 保证空闲 push 通道不被 LB / NAT 静默回收；
+		// EnforcementPolicy.MinTime 与 client ping 间隔对齐，避免 GOAWAY(too_many_pings)。
+		grpcServer := grpc.NewServer(
+			grpc.MaxConcurrentStreams(4096),
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    30 * time.Second,
+				Timeout: 10 * time.Second,
+			}),
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             10 * time.Second,
+				PermitWithoutStream: true,
+			}),
+		)
 		pbgateway.RegisterPushServiceServer(grpcServer, gatewayhandler.NewPushServiceServer())
 		log.Printf("Gateway PushService gRPC listening on %s (node=%s advertise=%s)", config.GatewayPushGRPCAddr, config.GatewayNodeID, adv)
 		if err := grpcServer.Serve(pushLis); err != nil {

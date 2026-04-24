@@ -254,6 +254,32 @@ button:disabled {
   color: #c7d2e7;
   font-size: 12px;
 }
+/* 群聊 @ 样式：高亮区段由 service.js groupMentionSegments（mention_meta V1）决定 */
+.bubble .mention {
+  font-weight: 600;
+}
+.bubble .mention-all {
+  color: #a8d4ff;
+}
+.msg-line.me .bubble .mention-all {
+  color: #e6f2ff;
+}
+.bubble .mention-me {
+  color: #ffd27a;
+  background: rgba(255, 170, 60, 0.15);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.msg-line.me .bubble .mention-me {
+  color: #fff7e6;
+  background: rgba(255, 255, 255, 0.18);
+}
+.bubble .mention-user {
+  color: #9ed4ff;
+}
+.msg-line.me .bubble .mention-user {
+  color: #e0eeff;
+}
 .file-bubble .file-name {
   font-weight: 600;
   margin-bottom: 4px;

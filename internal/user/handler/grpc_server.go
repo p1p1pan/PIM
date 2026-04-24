@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 
 	"pim/internal/user/model"
 	pbuser "pim/internal/user/pb"
@@ -51,10 +53,27 @@ func (s *GRPCUserServer) GetByID(ctx context.Context, req *pbuser.GetByIDRequest
 	}
 	u, err := s.svc.GetByID(uint(req.UserId))
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
 		log.Printf("[trace=%s] user.GetByID: failed to get user by id: %v", traceID, err)
 		return nil, status.Errorf(codes.Internal, "failed to get user by id: %v", err)
 	}
 	return &pbuser.GetByIDResponse{User: userToPB(u)}, nil
+}
+
+// GetIDByUsername 按登录名返回用户 ID，未找到时 user_id=0。
+func (s *GRPCUserServer) GetIDByUsername(ctx context.Context, req *pbuser.GetIDByUsernameRequest) (*pbuser.GetIDByUsernameResponse, error) {
+	traceID := traceIDFromCtx(ctx)
+	if req == nil || req.GetUsername() == "" {
+		return &pbuser.GetIDByUsernameResponse{}, nil
+	}
+	id, err := s.svc.GetIDByUsername(req.GetUsername())
+	if err != nil {
+		log.Printf("[trace=%s] user.GetIDByUsername: %v", traceID, err)
+		return nil, status.Errorf(codes.Internal, "failed to resolve username: %v", err)
+	}
+	return &pbuser.GetIDByUsernameResponse{UserId: uint64(id)}, nil
 }
 
 // Login 处理登录并返回 token。

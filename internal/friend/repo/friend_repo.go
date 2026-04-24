@@ -115,6 +115,15 @@ func (r *FriendRepo) IsBlocked(userID, targetID uint) (bool, error) {
 	return count > 0, err
 }
 
+// HasPendingFriendRequest 是否已存在 from -> to 且状态为 pending 的申请。
+func (r *FriendRepo) HasPendingFriendRequest(fromID, toID uint) (bool, error) {
+	var n int64
+	err := r.db.Model(&model.FriendRequest{}).
+		Where("from_user_id = ? AND to_user_id = ? AND status = ?", fromID, toID, "pending").
+		Count(&n).Error
+	return n > 0, err
+}
+
 // CreateFriendRequest 创建好友申请。
 func (r *FriendRepo) CreateFriendRequest(fromID, toID uint, remark string) (*model.FriendRequest, error) {
 	req := &model.FriendRequest{

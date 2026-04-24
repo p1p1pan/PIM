@@ -54,6 +54,14 @@ func NewProducer(cfg *ProducerConfig) *Producer {
 	saramaCfg.Producer.Return.Successes = true
 	saramaCfg.Producer.Retry.Max = 3
 	saramaCfg.Producer.Compression = sarama.CompressionNone
+
+	// 运行时扩分区后 producer 无需重启即可感知新分区（默认 10 分钟过长，生产期间热扩不可用）。
+	saramaCfg.Metadata.RefreshFrequency = 30 * time.Second
+	saramaCfg.Metadata.Full = true
+
+	// 默认 HashPartitioner 基于 FNV-1a + int32 强转，对 "a:b" 这类 key 容易出现偶数倾斜；
+	// ReferenceHashPartitioner 与 Java 客户端一致（murmur2），分布更均匀。
+	saramaCfg.Producer.Partitioner = sarama.NewReferenceHashPartitioner
 	flushMessages := config.KafkaProducerFlushMessages
 	if flushMessages <= 0 {
 		flushMessages = 100

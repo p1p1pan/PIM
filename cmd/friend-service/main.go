@@ -17,8 +17,10 @@ import (
 	pbfriend "pim/internal/friend/pb"
 	friendrepo "pim/internal/friend/repo"
 	friendservice "pim/internal/friend/service"
+	grpcresolver "pim/internal/grpcresolver"
 	pimdb "pim/internal/kit/db"
 	observemetrics "pim/internal/kit/observability/metrics"
+	pbuser "pim/internal/user/pb"
 	"pim/internal/registry"
 )
 
@@ -54,8 +56,15 @@ func main() {
 	r.Use(observemetrics.HTTPServerMetricsMiddleware("friend-service"))
 	observemetrics.RegisterMetricsRoute(r)
 
+	userConn, err := grpcresolver.Dial(bg, registry.LogicalUser)
+	if err != nil {
+		log.Fatalf("dial user: %v", err)
+	}
+	defer userConn.Close()
+	userClient := pbuser.NewUserServiceClient(userConn)
+
 	grpcServer := grpc.NewServer()
-	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb))
+	friendSvc := friendservice.NewService(friendrepo.NewFriendRepo(db, rdb), userClient)
 	pbfriend.RegisterFriendServiceServer(grpcServer, friendhandler.NewGRPCFriendServer(friendSvc))
 	listener, err := net.Listen("tcp", config.FriendGRPCAddr)
 	if err != nil {

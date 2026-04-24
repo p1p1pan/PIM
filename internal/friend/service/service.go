@@ -1,17 +1,24 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"pim/internal/friend/model"
 	"pim/internal/friend/repo"
 	"strings"
 
+	pbuser "pim/internal/user/pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
 var (
 	ErrInvalidUserID       = errors.New("invalid user id")
 	ErrCannotAddSelf       = errors.New("cannot add yourself as friend")
+	ErrRequesterUserNotFound = errors.New("requester user not found")
+	ErrTargetUserNotFound  = errors.New("target user not found")
+	ErrPendingRequestExists  = errors.New("friend request already pending")
 	ErrAlreadyFriends      = errors.New("already friends")
 	ErrBlocked             = errors.New("blocked relationship exists")
 	ErrRequestNotFound     = errors.New("friend request not found")
@@ -20,12 +27,13 @@ var (
 )
 
 type Service struct {
-	repo *repo.FriendRepo
+	repo  *repo.FriendRepo
+	users pbuser.UserServiceClient
 }
 
-// NewService 创建好友业务服务。
-func NewService(r *repo.FriendRepo) *Service {
-	return &Service{repo: r}
+// NewService 创建好友业务服务。users 用于校验用户 ID 是否存在，可为 nil（仅单测/省略校验）。
+func NewService(r *repo.FriendRepo, users pbuser.UserServiceClient) *Service {
+	return &Service{repo: r, users: users}
 }
 
 // ListFriends 查询好友列表，优先走缓存。
@@ -74,12 +82,17 @@ func (s *Service) ListOutgoingFriendRequests(userID uint, status string, cursor 
 }
 
 // SendFriendRequest 发送好友申请。
-func (s *Service) SendFriendRequest(fromID, toID uint, remark string) (*model.FriendRequest, error) {
+func (s *Service) SendFriendRequest(ctx context.Context, fromID, toID uint, remark string) (*model.FriendRequest, error) {
 	if fromID == 0 || toID == 0 {
 		return nil, ErrInvalidUserID
 	}
 	if fromID == toID {
 		return nil, ErrCannotAddSelf
+	}
+	if s.users != nil {
+		if err := s.ensureRequestUsersExist(ctx, fromID, toID); err != nil {
+			return nil, err
+		}
 	}
 	// 已是好友不重复申请
 	count, err := s.repo.CountRelation(fromID, toID)
@@ -100,7 +113,30 @@ func (s *Service) SendFriendRequest(fromID, toID uint, remark string) (*model.Fr
 	} else if blocked {
 		return nil, ErrBlocked
 	}
+	pending, err := s.repo.HasPendingFriendRequest(fromID, toID)
+	if err != nil {
+		return nil, err
+	}
+	if pending {
+		return nil, ErrPendingRequestExists
+	}
 	return s.repo.CreateFriendRequest(fromID, toID, remark)
+}
+
+func (s *Service) ensureRequestUsersExist(ctx context.Context, fromID, toID uint) error {
+	if _, err := s.users.GetByID(ctx, &pbuser.GetByIDRequest{UserId: uint64(fromID)}); err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return ErrRequesterUserNotFound
+		}
+		return err
+	}
+	if _, err := s.users.GetByID(ctx, &pbuser.GetByIDRequest{UserId: uint64(toID)}); err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return ErrTargetUserNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // ApproveFriendRequest 同意好友申请。

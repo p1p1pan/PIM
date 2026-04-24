@@ -104,7 +104,15 @@ window.IM_TEMPLATE = `
       <div v-for="(m, idx) in currentChatMessages" :key="'m-'+idx" class="msg-line" :class="{me: !!m.isMe, system: m.message_type==='system'}">
         <div class="bubble-wrap">
           <div class="sender" v-if="selectedGroupId && m.message_type!=='system'">{{ m.isMe ? '我' : ('用户 #' + m.from_user_id) }}</div>
-          <div class="bubble" v-if="m.ui_type!=='file'">{{ m.content }}</div>
+          <div class="bubble" v-if="m.ui_type!=='file'">
+            <template v-if="selectedGroupId && m.message_type!=='system'">
+              <template v-for="(seg, si) in groupMentionSegments(m)" :key="'s-'+idx+'-'+si">
+                <span v-if="seg.type==='plain'">{{ seg.text }}</span>
+                <span v-else :class="groupMentionClass(seg)">{{ seg.text }}</span>
+              </template>
+            </template>
+            <template v-else>{{ m.content }}</template>
+          </div>
           <div class="bubble file-bubble" v-else>
             <div class="file-name">{{ m.file_name || ('文件 #' + m.file_id) }}</div>
             <a class="file-link" v-if="fileMetaMap[m.file_id]?.status==='ok' && fileMetaMap[m.file_id]?.download_url" :href="fileMetaMap[m.file_id].download_url" target="_blank">下载文件</a>

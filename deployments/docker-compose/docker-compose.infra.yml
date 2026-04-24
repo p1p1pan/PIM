@@ -18,6 +18,14 @@ services:
     image: postgres:16-alpine
     container_name: pim-postgres
     restart: unless-stopped
+    # Round 232：10w 连接压测下 3 conv + 2 user + 2 auth + 其余 ≈ 600 连接，
+    # 默认 max_connections=100 远远不够；shared_buffers 默认 128MB 偏低。
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=500"
+      - "-c"
+      - "shared_buffers=512MB"
     environment:
       POSTGRES_USER: pim
       POSTGRES_PASSWORD: pim

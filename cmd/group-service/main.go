@@ -40,6 +40,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	if err := groupmodel.EnsureGroupMessageMentionMetaColumn(db); err != nil {
+		log.Fatalf("mention_meta column migration: %v", err)
+	}
 	if err := db.AutoMigrate(&groupmodel.Group{}, &groupmodel.GroupMember{}, &groupmodel.GroupMessage{}, &groupmodel.GroupReadState{}); err != nil {
 		log.Fatalf("Failed to migrate group tables: %v", err)
 	}

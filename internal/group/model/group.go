@@ -28,6 +28,7 @@ type GroupMessage struct {
 	FromUserID  uint      `gorm:"not null;index" json:"from_user_id"`
 	MessageType string    `gorm:"type:varchar(16);not null;default:text" json:"message_type"` // text/system
 	Content     string    `gorm:"type:text;not null" json:"content"`
+	MentionMeta string    `gorm:"column:mention_meta;type:text;not null" json:"mention_meta"`
 	Seq         uint64    `gorm:"not null;default:0;uniqueIndex:idx_group_seq" json:"seq"`
 	EventID     string    `gorm:"type:varchar(64);not null;uniqueIndex:idx_group_event_id" json:"event_id"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -35,11 +36,12 @@ type GroupMessage struct {
 
 // GroupKafkaMessage 是 group-message topic 的事件结构。
 type GroupKafkaMessage struct {
-	TraceID string `json:"trace_id"`
-	EventID string `json:"event_id"`
-	GroupID uint   `json:"group_id"`
-	From    uint   `json:"from"`
-	Content string `json:"content"`
+	TraceID     string `json:"trace_id"`
+	EventID     string `json:"event_id"`
+	GroupID     uint   `json:"group_id"`
+	From        uint   `json:"from"`
+	Content     string `json:"content"`
+	MentionMeta string `json:"mention_meta"`
 }
 
 // GroupPushMessage 是下行给在线成员的群消息事件。
@@ -50,6 +52,7 @@ type GroupPushMessage struct {
 	MessageType string `json:"message_type"`
 	Content     string `json:"content"`
 	Seq         uint64 `json:"seq"`
+	MentionMeta string `json:"mention_meta"`
 }
 
 // GroupMemberSyncEvent 用于异步同步 Redis 群成员权威索引。

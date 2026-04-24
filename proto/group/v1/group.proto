@@ -104,6 +104,7 @@ message GroupMessageItem {
   string content = 5;
   uint64 seq = 6;
   int64 created_at = 7;
+  string mention_meta = 8;
 }
 
 message ListGroupMessagesRequest {

@@ -151,7 +151,7 @@ func (s *Service) IsMember(groupID, userID uint) (bool, error) {
 }
 
 // SaveIncomingGroupMessage 校验成员身份并落库群消息。
-func (s *Service) SaveIncomingGroupMessage(groupID, fromUserID uint, content, eventID string) (*model.GroupMessage, error) {
+func (s *Service) SaveIncomingGroupMessage(groupID, fromUserID uint, content, eventID, mentionMeta string) (*model.GroupMessage, error) {
 	if groupID == 0 {
 		return nil, ErrInvalidGroupID
 	}
@@ -177,7 +177,7 @@ func (s *Service) SaveIncomingGroupMessage(groupID, fromUserID uint, content, ev
 		return nil, ErrNotGroupMember
 	}
 	// 事务内按 group 串行分配 seq + 通过 event_id 幂等落库。
-	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID)
+	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID, mentionMeta)
 }
 
 // SaveIncomingGroupMessageBatchTrusted 批量落库（同 group）：
@@ -211,7 +211,7 @@ func (s *Service) SaveIncomingGroupMessageBatchTrusted(groupID uint, inputs []re
 
 // SaveIncomingGroupMessageTrusted 用于 Kafka 内部消费链路：
 // 成员校验已在网关入口完成，此处跳过 IsMember 查询，减少每条消息一次 DB 往返。
-func (s *Service) SaveIncomingGroupMessageTrusted(groupID, fromUserID uint, content, eventID string) (*model.GroupMessage, error) {
+func (s *Service) SaveIncomingGroupMessageTrusted(groupID, fromUserID uint, content, eventID, mentionMeta string) (*model.GroupMessage, error) {
 	if groupID == 0 {
 		return nil, ErrInvalidGroupID
 	}
@@ -228,7 +228,7 @@ func (s *Service) SaveIncomingGroupMessageTrusted(groupID, fromUserID uint, cont
 	if eventID == "" {
 		return nil, ErrInvalidEventID
 	}
-	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID)
+	return s.repo.SaveGroupMessageIdempotent(groupID, fromUserID, "text", content, eventID, mentionMeta)
 }
 
 // ListMemberUserIDs 查询群成员 user_id 列表（供消息扇出）。
@@ -440,7 +440,7 @@ func (s *Service) AppendSystemMessage(groupID, operatorUserID uint, eventType, c
 	if !ok {
 		return nil, ErrNotGroupMember
 	}
-	return s.repo.SaveGroupMessageIdempotent(groupID, operatorUserID, "system", content, eventID)
+	return s.repo.SaveGroupMessageIdempotent(groupID, operatorUserID, "system", content, eventID, model.EmptyMentionMetaJSON)
 }
 
 // MarkGroupRead 上报群已读游标。

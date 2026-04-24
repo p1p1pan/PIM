@@ -11,4 +11,5 @@ message GroupKafkaMessage {
   uint64 group_id = 3;
   uint64 from_user_id = 4;
   string content = 5;
+  string mention_meta = 6;
 }

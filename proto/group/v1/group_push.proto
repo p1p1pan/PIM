@@ -12,4 +12,5 @@ message GroupPushMessage {
   string message_type = 4;
   string content = 5;
   uint64 seq = 6;
+  string mention_meta = 7;
 }

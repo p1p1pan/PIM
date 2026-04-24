@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	authsvc "pim/internal/auth/service"
@@ -77,6 +78,21 @@ func (s *Service) GetByID(id uint) (*model.User, error) {
 	}
 	u.Password = ""
 	return u, nil
+}
+
+// GetIDByUsername 按登录名查主键；未找到时返回 0 与 nil error（gRPC 固定语义）。
+func (s *Service) GetIDByUsername(username string) (uint, error) {
+	if strings.TrimSpace(username) == "" {
+		return 0, nil
+	}
+	u, err := s.repo.GetByUsername(username)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return u.ID, nil
 }
 
 func resolveBcryptCost() int {

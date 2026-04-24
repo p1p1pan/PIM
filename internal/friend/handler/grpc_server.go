@@ -108,13 +108,16 @@ func (s *GRPCFriendServer) SendFriendRequest(ctx context.Context, req *pbfriend.
 		return nil, status.Errorf(codes.InvalidArgument, "invalid request")
 	}
 
-	fr, err := s.svc.SendFriendRequest(uint(req.FromUserId), uint(req.ToUserId), req.Remark)
+	fr, err := s.svc.SendFriendRequest(ctx, uint(req.FromUserId), uint(req.ToUserId), req.Remark)
 	if err != nil {
 		log.Printf("[trace=%s] friend.SendFriendRequest: failed: %v", traceID, err)
 		switch {
 		case errors.Is(err, friendservice.ErrInvalidUserID), errors.Is(err, friendservice.ErrCannotAddSelf):
 			return nil, status.Error(codes.InvalidArgument, err.Error())
-		case errors.Is(err, friendservice.ErrAlreadyFriends), errors.Is(err, friendservice.ErrBlocked):
+		case errors.Is(err, friendservice.ErrRequesterUserNotFound), errors.Is(err, friendservice.ErrTargetUserNotFound):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, friendservice.ErrAlreadyFriends), errors.Is(err, friendservice.ErrBlocked),
+			errors.Is(err, friendservice.ErrPendingRequestExists):
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, status.Errorf(codes.Internal, "send friend request failed: %v", err)

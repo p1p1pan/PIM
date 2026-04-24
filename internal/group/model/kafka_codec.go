@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	"pim/internal/config"
-	pbgroup "pim/proto/group/v1"
+	pbgroup "pim/internal/group/pb"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -20,11 +20,12 @@ var groupKafkaJSONFallbackCount atomic.Uint64
 
 func EncodeGroupKafkaMessagePB(km GroupKafkaMessage) ([]byte, error) {
 	msg := &pbgroup.GroupKafkaMessage{
-		TraceId:    km.TraceID,
-		EventId:    km.EventID,
-		GroupId:    uint64(km.GroupID),
-		FromUserId: uint64(km.From),
-		Content:    km.Content,
+		TraceId:     km.TraceID,
+		EventId:     km.EventID,
+		GroupId:     uint64(km.GroupID),
+		FromUserId:  uint64(km.From),
+		Content:     km.Content,
+		MentionMeta: km.MentionMeta,
 	}
 	return proto.Marshal(msg)
 }
@@ -45,6 +46,7 @@ func DecodeGroupKafkaMessageWithMode(data []byte) (GroupKafkaMessage, string, er
 			out.GroupID = uint(pbMsg.GetGroupId())
 			out.From = uint(pbMsg.GetFromUserId())
 			out.Content = pbMsg.GetContent()
+			out.MentionMeta = pbMsg.GetMentionMeta()
 			return out, GroupKafkaDecodePB, nil
 		}
 	}

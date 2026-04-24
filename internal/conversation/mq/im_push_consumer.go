@@ -9,11 +9,13 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/errgroup"
 
 	"pim/internal/conversation/model"
 	pbgateway "pim/internal/gateway/pb"
 	logmodel "pim/internal/log/model"
 	"pim/internal/kit/mq/kafka"
+	observemetrics "pim/internal/kit/observability/metrics"
 	"pim/internal/registry"
 )
 
@@ -88,14 +90,17 @@ func handleImPushBatch(ctx context.Context, rdb *redis.Client, pushLookup regist
 	for i := range kms {
 		val := routeVals[i]
 		if val == "" {
+			observemetrics.ObserveConversationPushDropped("route_missing")
 			continue
 		}
 		parts := strings.SplitN(val, ":", 2)
 		if len(parts) < 2 || parts[0] == "" {
+			observemetrics.ObserveConversationPushDropped("route_malformed")
 			continue
 		}
 		node := parts[0]
 		if _, ok := pushClients[node]; !ok {
+			observemetrics.ObserveConversationPushDropped("node_not_found")
 			continue
 		}
 		onlineByNode[node] = append(onlineByNode[node], kms[i])
@@ -103,68 +108,79 @@ func handleImPushBatch(ctx context.Context, rdb *redis.Client, pushLookup regist
 	if len(onlineByNode) == 0 {
 		return nil
 	}
+	// 节点级并行：多 gateway 场景下，串行 gRPC 会把每个 node 的 RTT 线性累加；
+	// 改成 errgroup 并行后，本批整体耗时 ≈ 最慢节点的耗时。
+	g, gctx := errgroup.WithContext(ctx)
+	if n := len(onlineByNode); n > 0 {
+		g.SetLimit(n)
+	}
 	for node, online := range onlineByNode {
+		node, online := node, online
 		client := pushClients[node]
 		if client == nil {
 			continue
 		}
-		items := make([]*pbgateway.PushBatchItem, 0, len(online))
-		for _, km := range online {
-			items = append(items, &pbgateway.PushBatchItem{
-				FromUserId: uint64(km.FromUserID),
-				ToUserId:   uint64(km.ToUserID),
-				Content:    km.Content,
-			})
-		}
-		resp, err := client.PushBatchToConn(ctx, &pbgateway.PushBatchToConnRequest{Items: items})
-		if err != nil {
-			// 兼容老 gateway（未升级 batch RPC）或临时网络异常：回退到旧单条路径。
-			if strings.Contains(strings.ToLower(err.Error()), "unimplemented") {
-				var pushFailed int
-				for _, km := range online {
-					if _, pushErr := client.PushToConn(ctx, &pbgateway.PushToConnRequest{
-						FromUserId: uint64(km.FromUserID),
-						ToUserId:   uint64(km.ToUserID),
-						Content:    km.Content,
-					}); pushErr != nil {
-						pushFailed++
-						emitConsumerLog(producer, logmodel.Log{
-							TS:        time.Now(),
-							Level:     "warn",
-							Service:   "conversation",
-							TraceID:   km.TraceID,
-							Msg:       "im-message push failed",
-							EventID:   km.ClientMsgID,
-							UserID:    uint64(km.FromUserID),
-							ErrorCode: "push_failed",
-						})
-					}
-				}
-				if pushFailed > 0 && ttl > 0 {
-					for _, km := range online {
-						pushRouteCache.Delete(km.ToUserID)
-					}
-				}
-				continue
-			}
-			emitConsumerLog(producer, logmodel.Log{
-				TS:        time.Now(),
-				Level:     "warn",
-				Service:   "conversation",
-				TraceID:   online[0].TraceID,
-				Msg:       "im-message push batch rpc failed",
-				EventID:   online[0].ClientMsgID,
-				UserID:    uint64(online[0].FromUserID),
-				ErrorCode: "push_batch_failed",
-			})
-			return err
-		}
-		if resp.GetFailed() > 0 && ttl > 0 {
-			// 批量返回失败时无法精准定位失败项，保守清理本批 toUser 缓存。
+		g.Go(func() error {
+			items := make([]*pbgateway.PushBatchItem, 0, len(online))
 			for _, km := range online {
-				pushRouteCache.Delete(km.ToUserID)
+				items = append(items, &pbgateway.PushBatchItem{
+					FromUserId: uint64(km.FromUserID),
+					ToUserId:   uint64(km.ToUserID),
+					Content:    km.Content,
+				})
 			}
-		}
+			resp, err := client.PushBatchToConn(gctx, &pbgateway.PushBatchToConnRequest{Items: items})
+			if err != nil {
+				// 兼容老 gateway（未升级 batch RPC）或临时网络异常：回退到旧单条路径；
+				// 单条仍失败只记日志不抛错，避免一条"死信"级别失败把整批丢回 Kafka 造成风暴。
+				if strings.Contains(strings.ToLower(err.Error()), "unimplemented") {
+					var pushFailed int
+					for _, km := range online {
+						if _, pushErr := client.PushToConn(gctx, &pbgateway.PushToConnRequest{
+							FromUserId: uint64(km.FromUserID),
+							ToUserId:   uint64(km.ToUserID),
+							Content:    km.Content,
+						}); pushErr != nil {
+							pushFailed++
+							emitConsumerLog(producer, logmodel.Log{
+								TS:        time.Now(),
+								Level:     "warn",
+								Service:   "conversation",
+								TraceID:   km.TraceID,
+								Msg:       "im-message push failed",
+								EventID:   km.ClientMsgID,
+								UserID:    uint64(km.FromUserID),
+								ErrorCode: "push_failed",
+							})
+						}
+					}
+					if pushFailed > 0 && ttl > 0 {
+						for _, km := range online {
+							pushRouteCache.Delete(km.ToUserID)
+						}
+					}
+					return nil
+				}
+				emitConsumerLog(producer, logmodel.Log{
+					TS:        time.Now(),
+					Level:     "warn",
+					Service:   "conversation",
+					TraceID:   online[0].TraceID,
+					Msg:       "im-message push batch rpc failed",
+					EventID:   online[0].ClientMsgID,
+					UserID:    uint64(online[0].FromUserID),
+					ErrorCode: "push_batch_failed",
+				})
+				return err
+			}
+			if resp.GetFailed() > 0 && ttl > 0 {
+				// 批量返回失败时无法精准定位失败项，保守清理本节点分组下的 toUser 缓存。
+				for _, km := range online {
+					pushRouteCache.Delete(km.ToUserID)
+				}
+			}
+			return nil
+		})
 	}
-	return nil
+	return g.Wait()
 }
