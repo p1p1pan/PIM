@@ -1,0 +1,9 @@
+[
+  {
+    "targets": ["host.docker.internal:26280"],
+    "labels": {
+      "service": "observe-service",
+      "job": "pim-observe"
+    }
+  }
+]

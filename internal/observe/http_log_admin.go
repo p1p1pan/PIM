@@ -1,4 +1,5 @@
-package handler
+// Package observe 提供独立 observe 服务的运行概览、日志与后台 metrics；从 gateway 拆出。
+package observe
 
 import (
 	"context"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +17,27 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
+	"github.com/redis/go-redis/v9"
 
 	"pim/internal/config"
+	"pim/internal/observability/promql"
 )
+
+// Service 承载与 gateway.HTTPServer 中已迁出的只读 admin 能力，不含 drill / 文件死信重放写操作。
+type Service struct {
+	LogServiceBaseURL  string
+	FileServiceBaseURL string
+	// NodeID 用于在响应中自描述（如 observe-service-1），gateway_connections 优先走 Prom 聚合。
+	NodeID string
+	// Redis 用于 /admin/metrics 在线连接扫描（与迁出前 gateway 行为一致）。
+	Redis *redis.Client
+	// APIRouteCatalog 与 gateway 的 apiRouteCatalog 一致，未配置时使用 DefaultAPIRouteCatalog。
+	APIRouteCatalog []string
+	// GatewayMetricsScrapeURL 若设（如 http://127.0.0.1:26080/metrics），用文本格式解析为本地 mfs 快照以降级。
+	GatewayMetricsScrapeURL string
+}
 
 type observabilitySnapshot struct {
 	at                time.Time
@@ -49,14 +67,14 @@ var (
 )
 
 // handleLogsByTrace 查询 trace_id 对应日志。
-func (s *HTTPServer) handleLogsByTrace(c *gin.Context) {
+func (s *Service) handleLogsByTrace(c *gin.Context) {
 	traceID := strings.TrimSpace(c.Param("trace_id"))
 	if traceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "trace_id is required"})
 		return
 	}
 	size := strings.TrimSpace(c.Query("size"))
-	u := fmt.Sprintf("%s/api/v1/logs/trace/%s", s.logServiceBaseURL, url.PathEscape(traceID))
+	u := fmt.Sprintf("%s/api/v1/logs/trace/%s", s.LogServiceBaseURL, url.PathEscape(traceID))
 	if size != "" {
 		u += "?size=" + url.QueryEscape(size)
 	}
@@ -64,7 +82,7 @@ func (s *HTTPServer) handleLogsByTrace(c *gin.Context) {
 }
 
 // handleLogsByEvent 查询 event_id 对应日志。
-func (s *HTTPServer) handleLogsByEvent(c *gin.Context) {
+func (s *Service) handleLogsByEvent(c *gin.Context) {
 	eventID := strings.TrimSpace(c.Query("event_id"))
 	if eventID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "event_id is required"})
@@ -75,12 +93,12 @@ func (s *HTTPServer) handleLogsByEvent(c *gin.Context) {
 	if size := strings.TrimSpace(c.Query("size")); size != "" {
 		q.Set("size", size)
 	}
-	u := fmt.Sprintf("%s/api/v1/logs/search?%s", s.logServiceBaseURL, q.Encode())
+	u := fmt.Sprintf("%s/api/v1/logs/search?%s", s.LogServiceBaseURL, q.Encode())
 	s.proxyLogQuery(c, u)
 }
 
 // handleLogsFilter 按 service/level/time-range 查询日志。
-func (s *HTTPServer) handleLogsFilter(c *gin.Context) {
+func (s *Service) handleLogsFilter(c *gin.Context) {
 	q := url.Values{}
 	if v := strings.TrimSpace(c.Query("service")); v != "" {
 		q.Set("service", v)
@@ -97,11 +115,11 @@ func (s *HTTPServer) handleLogsFilter(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("size")); v != "" {
 		q.Set("size", v)
 	}
-	u := fmt.Sprintf("%s/api/v1/logs/filter?%s", s.logServiceBaseURL, q.Encode())
+	u := fmt.Sprintf("%s/api/v1/logs/filter?%s", s.LogServiceBaseURL, q.Encode())
 	s.proxyLogQuery(c, u)
 }
 
-func (s *HTTPServer) proxyLogQuery(c *gin.Context, target string) {
+func (s *Service) proxyLogQuery(c *gin.Context, target string) {
 	// 统一由 gateway 代理到 log-service，前端无需直接跨域访问 log-service。
 	resp, err := http.Get(target)
 	if err != nil {
@@ -132,64 +150,8 @@ func (s *HTTPServer) proxyLogQuery(c *gin.Context, target string) {
 	c.JSON(http.StatusOK, out)
 }
 
-// handleFileScanDLQList 代理 file-service 的死信任务列表。
-func (s *HTTPServer) handleFileScanDLQList(c *gin.Context) {
-	u := fmt.Sprintf("%s/api/v1/admin/file-scan/dlq?%s", s.fileServiceBaseURL, c.Request.URL.RawQuery)
-	s.proxyFileServiceHTTP(c, http.MethodGet, u)
-}
-
-// handleFileScanDLQReplay 代理 file-service 的死信重放。
-func (s *HTTPServer) handleFileScanDLQReplay(c *gin.Context) {
-	id := strings.TrimSpace(c.Param("file_id"))
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file_id is required"})
-		return
-	}
-	u := fmt.Sprintf("%s/api/v1/admin/file-scan/dlq/%s/replay", s.fileServiceBaseURL, url.PathEscape(id))
-	s.proxyFileServiceHTTP(c, http.MethodPost, u)
-}
-
-func (s *HTTPServer) proxyFileServiceHTTP(c *gin.Context, method, target string) {
-	req, err := http.NewRequestWithContext(c.Request.Context(), method, target, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "build file-service request failed"})
-		return
-	}
-	if tid := c.GetHeader("X-Trace-Id"); tid != "" {
-		// 透传 trace_id，方便跨 gateway/file-service 串联排查。
-		req.Header.Set("X-Trace-Id", tid)
-	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "file-service unavailable"})
-		return
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "read file-service response failed"})
-		return
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var out map[string]interface{}
-		if json.Unmarshal(b, &out) == nil {
-			c.JSON(resp.StatusCode, out)
-			return
-		}
-		c.JSON(resp.StatusCode, gin.H{"error": string(b)})
-		return
-	}
-	var out map[string]interface{}
-	if err := json.Unmarshal(b, &out); err != nil {
-		c.JSON(http.StatusOK, gin.H{"raw": string(b)})
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
 // handleAdminHealth 聚合返回各后端服务健康状态，供管理后台展示。
-func (s *HTTPServer) handleAdminHealth(c *gin.Context) {
+func (s *Service) handleAdminHealth(c *gin.Context) {
 	type svc struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
@@ -205,8 +167,8 @@ func (s *HTTPServer) handleAdminHealth(c *gin.Context) {
 		{ID: "friend", Name: "Friend Service", URL: config.AdminHealthFriendURL},
 		{ID: "conversation", Name: "Conversation Service", URL: config.AdminHealthConversationURL},
 		{ID: "group", Name: "Group Service", URL: config.AdminHealthGroupURL},
-		{ID: "file", Name: "File Service", URL: s.fileServiceBaseURL + "/health"},
-		{ID: "log", Name: "Log Service", URL: s.logServiceBaseURL + "/health"},
+		{ID: "file", Name: "File Service", URL: s.FileServiceBaseURL + "/health"},
+		{ID: "log", Name: "Log Service", URL: s.LogServiceBaseURL + "/health"},
 	}
 	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	for i := range targets {
@@ -239,13 +201,13 @@ func (s *HTTPServer) handleAdminHealth(c *gin.Context) {
 }
 
 // handleAdminMetrics 返回后台运行概览指标（在线连接 + 日志统计）。
-func (s *HTTPServer) handleAdminMetrics(c *gin.Context) {
+func (s *Service) handleAdminMetrics(c *gin.Context) {
 	online := int64(0)
-	if s.redisClient != nil {
+	if s.Redis != nil {
 		var cursor uint64
 		for {
 			// 扫描在线连接键，避免 KEYS 带来的阻塞风险。
-			keys, next, err := s.redisClient.Scan(c.Request.Context(), cursor, "ws:conn:*", 500).Result()
+			keys, next, err := s.Redis.Scan(c.Request.Context(), cursor, "ws:conn:*", 500).Result()
 			if err != nil {
 				break
 			}
@@ -257,7 +219,7 @@ func (s *HTTPServer) handleAdminMetrics(c *gin.Context) {
 		}
 	}
 
-	metricsURL := strings.TrimRight(s.logServiceBaseURL, "/") + "/api/v1/admin/metrics"
+	metricsURL := strings.TrimRight(s.LogServiceBaseURL, "/") + "/api/v1/admin/metrics"
 	resp, err := http.Get(metricsURL)
 	if err != nil {
 		// 日志服务不可用时仍返回在线人数，保证后台页面有降级数据可展示。
@@ -306,59 +268,250 @@ func (s *HTTPServer) handleAdminMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// metricFamiliesHasGatewayScrapeContent 为 true 表示 mfs 中含仅网关注册的系列（非 observe 本进程 HTTP 的那套）。
+// 用于 meta：避免用 pim_http_requests_total 误判（observe 也有同名、service=observe-service）。
+func metricFamiliesHasGatewayScrapeContent(mfs map[string]*dto.MetricFamily) bool {
+	for _, n := range []string{
+		"pim_gateway_ws_connections",
+		"pim_gateway_push_total",
+		"pim_gateway_ws_send_duration_seconds",
+	} {
+		mf := mfs[n]
+		if mf == nil {
+			continue
+		}
+		if len(mf.Metric) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // handleAdminObservabilityOverview returns a stable aggregation contract for frontend dashboards.
-func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
-	serviceHealth, downCount := s.collectServiceHealth(c.Request.Context())
-	metricFamilies := gatherMetricFamilies()
+//
+// 数据来源混合：
+//   - 集群级（KPI、API 表格、Topic 速率、SLO）优先走 PromQL 聚合，避免 gateway-1/2 切换引起跳变；
+//   - 按实例视角（gateway_connections、service_health）保留本地 gather + 本机探测，
+//     因为集群聚合对这类指标反而失去定位意义。
+//
+// 每一个走 Prom 的指标块都带本地 fallback；最终在 sources/scopes 里如实暴露给前端。
+func (s *Service) handleAdminObservabilityOverview(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// 默认所有块标为 local；若对应 Prom 查询成功，覆盖为 prom。
+	sources := gin.H{
+		"ingress_qps":         "local",
+		"api_p95_ms":          "local",
+		"error_rate":          "local",
+		"push_success_rate":   "local",
+		"kafka_retry_total":   "local",
+		"api_quality":         "local",
+		"message_pipeline":    "local",
+		"slo_overview":        "local",
+		"gateway_connections": "local",
+		"service_health":      "local",
+		"service_instances":   "local",
+		"timeseries":          "local",
+	}
+	// scope 表示聚合视角：cluster=所有实例聚合；local=当前网关自报。
+	scopes := gin.H{
+		"ingress_qps":         "cluster",
+		"api_p95_ms":          "cluster",
+		"error_rate":          "cluster",
+		"push_success_rate":   "cluster",
+		"kafka_retry_total":   "cluster",
+		"api_quality":         "cluster",
+		"message_pipeline":    "cluster",
+		"slo_overview":        "cluster",
+		"gateway_connections": "local",
+		"service_health":      "local",
+		"service_instances":   "cluster",
+		"timeseries":          "cluster",
+	}
+
+	serviceHealth, downCount := s.collectServiceHealth(ctx)
+	metricFamilies, gatewayMetricsScraped := s.gatherMetricFamilies()
+
+	// 集群级按实例视图：只有 Prom 可用时才填充；否则前端只显示本地 service_health 摘要。
+	serviceInstances, svcUp, svcTotal, svcInstOK := collectServiceInstancesFromProm(ctx)
+	if svcInstOK {
+		sources["service_instances"] = "prom"
+	}
 
 	apiQuality := buildAPIQuality(metricFamilies)
-	apiQuality = mergeAPIQualityWithRouteCatalog(apiQuality, s.apiRouteCatalog)
+	routeCat := s.APIRouteCatalog
+	if len(routeCat) == 0 {
+		routeCat = DefaultAPIRouteCatalog()
+	}
+	apiQuality = mergeAPIQualityWithRouteCatalog(apiQuality, routeCat)
 	messagePipeline := buildMessagePipeline(metricFamilies)
 	connectRate, disconnectRate := fillRateSnapshots(metricFamilies, apiQuality, messagePipeline)
-	// 优先使用 Prometheus 聚合 route qps（跨所有 gateway 实例）；失败则回退本地瞬时差分。
-	overlayAPIQPSFromPrometheus(c.Request.Context(), apiQuality)
+
+	// 用集群 Prom 数据覆盖到 route/topic 明细表上。覆盖失败则保留本地快照值。
+	if overlayAPIQualityFromProm(ctx, apiQuality) {
+		sources["api_quality"] = "prom"
+	}
+	if overlayTopicRatesFromProm(ctx, messagePipeline) {
+		sources["message_pipeline"] = "prom"
+	}
+
 	windowDur := parseOverviewWindow(c.Query("window"))
 	appendAPITimeseries(apiQuality)
-	// 入口QPS卡片/折线使用瞬时差分值（窗口只控制展示区间，不改变点值口径）。
+
 	ingressQPS := computeIngressQPS(apiQuality)
-	// api_quality 统一使用瞬时口径；window 仅用于 timeseries 展示区间。
+	if v, ok := computeIngressQPSFromProm(ctx); ok {
+		ingressQPS = v
+		sources["ingress_qps"] = "prom"
+	}
+
+	// sloOverview 基于已被 Prom overlay 的 apiQuality/messagePipeline 推导；
+	// 若能从 Prom 拿到更准的全局 p95，单独再覆盖 api_p95_now_ms 与达标判定。
 	sloOverview := buildSLOOverview(apiQuality, messagePipeline, downCount, metricFamilies)
+	if v, ok := computeAPIP95MSFromProm(ctx); ok {
+		sloOverview["api_p95_now_ms"] = v
+		sloOverview["api_p95_met"] = v > 0 && v <= 300
+		sources["api_p95_ms"] = "prom"
+		sources["slo_overview"] = "prom"
+	}
+	// 优先用新增的 pim_im_e2e_server_seconds（直接对照 bench.e2e 的服务端段）。
+	// 没流量或 Prom 不可用时保留 estimateMessageE2EP95MS 的本地旧口径。
+	if v, ok := computeMsgE2EP95MSFromProm(ctx); ok {
+		sloOverview["msg_e2e_p95_now_ms"] = v
+		sloOverview["msg_e2e_p95_met"] = v > 0 && v <= 500
+		sources["slo_overview"] = "prom"
+	}
+	// WS ack p95（对照 bench.ack 的服务端段），只在能拿到 Prom 数据时展示。
+	if v, ok := computeWSAckP95MSFromProm(ctx); ok {
+		sloOverview["ws_ack_p95_now_ms"] = v
+		sloOverview["ws_ack_p95_target_ms"] = 100
+		sloOverview["ws_ack_p95_met"] = v > 0 && v <= 100
+	}
+	if v, ok := computeWSAckP99MSFromProm(ctx); ok {
+		sloOverview["ws_ack_p99_now_ms"] = v
+		sources["slo_overview"] = "prom"
+	}
+	if v, ok := computeMsgE2EP99MSFromProm(ctx); ok {
+		sloOverview["msg_e2e_p99_now_ms"] = v
+		sources["slo_overview"] = "prom"
+	}
+
+	benchIM := gin.H{}
+	if v, _, ok := promql.Scalar(ctx, `sum(rate(pim_gateway_ws_send_duration_seconds_count[1m]))`); ok {
+		benchIM["ws_ack_obs_per_sec"] = math.Round(v*1000) / 1000
+	}
+	if v, ok := computeWSAckP95MSFromProm(ctx); ok {
+		benchIM["ws_ack_p95_ms"] = v
+	}
+	if v, ok := computeWSAckP99MSFromProm(ctx); ok {
+		benchIM["ws_ack_p99_ms"] = v
+	}
+	if v, ok := computeMsgE2EP95MSFromProm(ctx); ok {
+		benchIM["im_e2e_p95_ms"] = v
+	}
+	if v, ok := computeMsgE2EP99MSFromProm(ctx); ok {
+		benchIM["im_e2e_p99_ms"] = v
+	}
+	if v, _, ok := promql.Scalar(ctx, `sum(rate(pim_im_e2e_server_seconds_count[1m]))`); ok {
+		benchIM["im_e2e_obs_per_sec"] = math.Round(v*1000) / 1000
+	}
+
+	nonAdminErrorRate := computeNonAdminErrorRate(apiQuality)
+	if v, ok := computeErrorRateFromProm(ctx); ok {
+		nonAdminErrorRate = v
+		sources["error_rate"] = "prom"
+	}
+
 	alertsOverview := buildAlertsOverview(downCount, messagePipeline, sloOverview)
 	downstreamWriteQuality := buildDownstreamWriteQuality(metricFamilies, messagePipeline)
-	nonAdminErrorRate := computeNonAdminErrorRate(apiQuality)
+
 	pushSuccessRate := 0.0
 	if gp, ok := downstreamWriteQuality["gateway_push"].(gin.H); ok {
 		if v, ok2 := gp["success_rate"].(float64); ok2 {
 			pushSuccessRate = v * 100
 		}
 	}
+	if v, ok := computePushSuccessRateFromProm(ctx); ok {
+		pushSuccessRate = v
+		sources["push_success_rate"] = "prom"
+	}
+
 	kafkaRetryLike := 0.0
 	if kw, ok := downstreamWriteQuality["kafka_write"].(gin.H); ok {
 		if v, ok2 := kw["retry_like_total"].(int64); ok2 {
 			kafkaRetryLike = float64(v)
 		}
 	}
+	if v, ok := computeKafkaRetryTotalFromProm(ctx); ok {
+		kafkaRetryLike = v
+		sources["kafka_retry_total"] = "prom"
+	}
+
+	// 写入本地 timeseries 存储，供折线图查询；不管数据是 prom 还是 local，统一沉淀。
 	appendMetricPoint("ingress_qps", ingressQPS)
-	appendMetricPoint("api_p95_ms", float64(sloOverview["api_p95_now_ms"].(int64)))
+	if v, ok := sloOverview["api_p95_now_ms"].(int64); ok {
+		appendMetricPoint("api_p95_ms", float64(v))
+	}
 	appendMetricPoint("error_rate", nonAdminErrorRate)
 	appendMetricPoint("push_success_rate", pushSuccessRate)
 	appendMetricPoint("kafka_retry_total", kafkaRetryLike)
 
+	// 诊断用 meta：探针与本请求中已成功使用的 Prom 结果交叉验证，避免「能查数但仍提示未连上」的误报。
+	probeProm := promql.Probe(ctx)
+	promFromSources := false
+	for _, v := range sources {
+		if s, ok := v.(string); ok && s == "prom" {
+			promFromSources = true
+			break
+		}
+	}
+	promForMeta := probeProm || promFromSources
+	gwScrapeForMeta := gatewayMetricsScraped
+	if !gwScrapeForMeta {
+		gwScrapeForMeta = metricFamiliesHasGatewayScrapeContent(metricFamilies)
+	}
+	promPimGatewayUp := -1.0
+	if promForMeta {
+		if v, _, ok := promql.Scalar(ctx, `sum(up{job="pim-gateway"})`); ok {
+			promPimGatewayUp = v
+		}
+	}
+	// 只要 Prom 可用（探针或本请求任一路已通），与集群 HTTP/聚合 相关的徽标统一标为 prom；数值仍可为 0 或回退（由上面各分支写入）。
+	if promForMeta {
+		for _, k := range []string{
+			"ingress_qps", "api_p95_ms", "error_rate", "push_success_rate", "kafka_retry_total",
+			"api_quality", "message_pipeline", "slo_overview", "service_instances", "timeseries",
+		} {
+			sources[k] = "prom"
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"service_health":   serviceHealth,
+		"overview_meta": gin.H{
+			"prometheus_reachable":        promForMeta,
+			"prometheus_reachable_probe":  probeProm,
+			"gateway_metrics_scraped":     gwScrapeForMeta,
+			"gateway_scrape_url_reachable": gatewayMetricsScraped,
+			"prom_pim_gateway_targets_up":  promPimGatewayUp, // 来自 Prom 的 job=pim-gateway；-1=未取到
+		},
+		"service_health":    serviceHealth,
+		"service_instances": serviceInstances,
+		"service_health_summary": gin.H{
+			"up":    svcUp,
+			"total": svcTotal,
+		},
 		"api_quality":      apiQuality,
 		"message_pipeline": messagePipeline,
 		"gateway_connections": gin.H{
-			"node":               s.nodeID,
+			"node":               s.NodeID,
 			"active_connections": metricGauge(metricFamilies, "pim_gateway_ws_connections"),
 			"connect_rate":       connectRate,
 			"disconnect_rate":    disconnectRate,
 		},
 		"timeseries": gin.H{
-			"window":      windowDur.String(),
-			"ingress_qps": metricSeriesByWindow("ingress_qps", windowDur),
-			"api_p95_ms":  metricSeriesByWindow("api_p95_ms", windowDur),
-			"error_rate":  metricSeriesByWindow("error_rate", windowDur),
+			"window":            windowDur.String(),
+			"ingress_qps":       metricSeriesByWindow("ingress_qps", windowDur),
+			"api_p95_ms":        metricSeriesByWindow("api_p95_ms", windowDur),
+			"error_rate":        metricSeriesByWindow("error_rate", windowDur),
 			"push_success_rate": metricSeriesByWindow("push_success_rate", windowDur),
 			"kafka_retry_total": metricSeriesByWindow("kafka_retry_total", windowDur),
 			"api_domain":        metricSeriesByPrefixWindow("api_domain|", windowDur),
@@ -367,82 +520,286 @@ func (s *HTTPServer) handleAdminObservabilityOverview(c *gin.Context) {
 		"downstream_write_quality": downstreamWriteQuality,
 		"alerts_overview":          alertsOverview,
 		"slo_overview":             sloOverview,
+		"sources":                  sources,
+		"scopes":                   scopes,
+		"bench_im_ws":              benchIM,
+		"bench_run":                snapshotBenchRun(),
+		"bench_runs":               snapshotBenchRuns(),
 		"generated_at":             time.Now().Format(time.RFC3339),
 	})
 }
 
-type promInstantQueryResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		ResultType string `json:"resultType"`
-		Result     []struct {
-			Metric map[string]string `json:"metric"`
-			Value  []interface{}     `json:"value"`
-		} `json:"result"`
-	} `json:"data"`
-}
+// overlayAPIQualityFromProm 用 PromQL 覆盖 API 表格里的 qps / error_rate / p95_latency_ms。
+// 三个表达式分别查，任何一个成功都会部分 overlay；全部失败返回 false（保持本地快照值）。
+// 返回值 ok=true 表示至少有一个字段被 Prom 覆盖，调用方据此把 source 标记成 prom。
+func overlayAPIQualityFromProm(ctx context.Context, apiQuality []gin.H) bool {
+	qpsMap := map[string]float64{}
+	_, _, qpsOK := func() ([]promql.Sample, string, bool) {
+		samples, src, ok := promql.InstantVec(ctx, `sum by (route) (rate(pim_http_requests_total{service="gateway"}[1m]))`)
+		if ok {
+			for _, s := range samples {
+				if r := s.Labels["route"]; r != "" {
+					qpsMap[r] = s.Value
+				}
+			}
+		}
+		return samples, src, ok
+	}()
 
-func overlayAPIQPSFromPrometheus(ctx context.Context, apiQuality []gin.H) {
-	base := strings.TrimRight(strings.TrimSpace(config.PrometheusQueryURL), "/")
-	if base == "" {
-		return
-	}
-	expr := `sum by (route) (rate(pim_http_requests_total{service="gateway"}[1m]))`
-	q := url.Values{}
-	q.Set("query", expr)
-	u := base + "/api/v1/query?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return
-	}
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-	var pr promInstantQueryResponse
-	if err := json.Unmarshal(body, &pr); err != nil {
-		return
-	}
-	if pr.Status != "success" {
-		return
-	}
-	routeQPS := make(map[string]float64, len(pr.Data.Result))
-	for _, r := range pr.Data.Result {
-		route := strings.TrimSpace(r.Metric["route"])
-		if route == "" || len(r.Value) < 2 {
-			continue
+	errMap := map[string]float64{}
+	_, _, errOK := func() ([]promql.Sample, string, bool) {
+		samples, src, ok := promql.InstantVec(ctx,
+			`sum by (route) (rate(pim_http_requests_total{service="gateway",status=~"4..|5.."}[1m])) / sum by (route) (rate(pim_http_requests_total{service="gateway"}[1m]))`)
+		if ok {
+			for _, s := range samples {
+				if r := s.Labels["route"]; r != "" && !math.IsNaN(s.Value) {
+					errMap[r] = s.Value
+				}
+			}
 		}
-		valStr, ok := r.Value[1].(string)
-		if !ok {
-			continue
+		return samples, src, ok
+	}()
+
+	p95Map := map[string]float64{}
+	_, _, p95OK := func() ([]promql.Sample, string, bool) {
+		samples, src, ok := promql.InstantVec(ctx,
+			`histogram_quantile(0.95, sum by (le, route) (rate(pim_http_request_duration_seconds_bucket{service="gateway"}[5m]))) * 1000`)
+		if ok {
+			for _, s := range samples {
+				if r := s.Labels["route"]; r != "" && !math.IsNaN(s.Value) {
+					p95Map[r] = s.Value
+				}
+			}
 		}
-		v, err := strconv.ParseFloat(valStr, 64)
-		if err != nil {
-			continue
+		return samples, src, ok
+	}()
+
+	p99Map := map[string]float64{}
+	_, _, p99OK := func() ([]promql.Sample, string, bool) {
+		samples, src, ok := promql.InstantVec(ctx,
+			`histogram_quantile(0.99, sum by (le, route) (rate(pim_http_request_duration_seconds_bucket{service="gateway"}[5m]))) * 1000`)
+		if ok {
+			for _, s := range samples {
+				if r := s.Labels["route"]; r != "" && !math.IsNaN(s.Value) {
+					p99Map[r] = s.Value
+				}
+			}
 		}
-		routeQPS[route] = v
-	}
-	if len(routeQPS) == 0 {
-		return
+		return samples, src, ok
+	}()
+
+	if !qpsOK && !errOK && !p95OK && !p99OK {
+		return false
 	}
 	for _, item := range apiQuality {
 		route := strings.TrimSpace(fmt.Sprint(item["route"]))
 		if route == "" {
 			continue
 		}
-		if v, ok := routeQPS[route]; ok {
-			item["qps"] = math.Round(v*1000) / 1000
+		if qpsOK {
+			if v, ok := qpsMap[route]; ok {
+				item["qps"] = math.Round(v*1000) / 1000
+			}
+		}
+		if errOK {
+			if v, ok := errMap[route]; ok {
+				item["error_rate"] = math.Round(v*100000) / 100000
+			}
+		}
+		if p95OK {
+			if v, ok := p95Map[route]; ok {
+				item["p95_latency_ms"] = int64(math.Round(v))
+			}
+		}
+		if p99OK {
+			if v, ok := p99Map[route]; ok {
+				item["p99_latency_ms"] = int64(math.Round(v))
+			}
 		}
 	}
+	return true
+}
+
+// overlayTopicRatesFromProm 用 PromQL 覆盖 message_pipeline 各 topic 的速率与 handler p95。
+// 仅在 produce 查询成功时返回 true；consume 与 p95 独立降级，不影响整体判定。
+func overlayTopicRatesFromProm(ctx context.Context, messagePipeline []gin.H) bool {
+	prodMap := map[string]float64{}
+	samples, _, produceOK := promql.InstantVec(ctx, `sum by (topic) (rate(pim_kafka_messages_total{direction="produce",result="ok"}[1m]))`)
+	if produceOK {
+		for _, s := range samples {
+			if t := s.Labels["topic"]; t != "" {
+				prodMap[t] = s.Value
+			}
+		}
+	}
+	conMap := map[string]float64{}
+	if samples, _, ok := promql.InstantVec(ctx, `sum by (topic) (rate(pim_kafka_messages_total{direction="consume",result="ok"}[1m]))`); ok {
+		for _, s := range samples {
+			if t := s.Labels["topic"]; t != "" {
+				conMap[t] = s.Value
+			}
+		}
+	}
+	p95Map := map[string]float64{}
+	if samples, _, ok := promql.InstantVec(ctx,
+		`histogram_quantile(0.95, sum by (le, topic) (rate(pim_kafka_handler_duration_seconds_bucket{result="ok"}[5m]))) * 1000`); ok {
+		for _, s := range samples {
+			if t := s.Labels["topic"]; t != "" && !math.IsNaN(s.Value) {
+				p95Map[t] = s.Value
+			}
+		}
+	}
+
+	if !produceOK {
+		return false
+	}
+	for _, item := range messagePipeline {
+		topic, _ := item["topic"].(string)
+		if topic == "" {
+			continue
+		}
+		if v, ok := prodMap[topic]; ok {
+			item["produce_rate"] = math.Round(v*1000) / 1000
+		}
+		if v, ok := conMap[topic]; ok {
+			item["consume_rate"] = math.Round(v*1000) / 1000
+		}
+		if v, ok := p95Map[topic]; ok {
+			item["e2e_p95_ms"] = int64(math.Round(v))
+		}
+	}
+	return true
+}
+
+func computeIngressQPSFromProm(ctx context.Context) (float64, bool) {
+	v, _, ok := promql.Scalar(ctx, `sum(rate(pim_http_requests_total{service="gateway",route!~"/api/v1/admin/.*"}[1m]))`)
+	if !ok || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return math.Round(v*1000) / 1000, true
+}
+
+func computeAPIP95MSFromProm(ctx context.Context) (int64, bool) {
+	// 运行概览顶栏「API p95」用 [1m]：对「压测刚停」后仍用 [5m] 时易把 5 分钟内尾延迟与空窗混进分位数，p95 常顶在 5s 桶（显示约 5000ms）；1m 更贴「当前」HTTP。
+	// /ws 在网关侧由 handleWS 阻塞到 WebSocket 关闭，HTTP 直方图记的是「整段连接时长」，会远高于 REST；顶栏「API p95」排除 /ws 以免与 e2e/ack 消息延迟混淆。
+	v, _, ok := promql.Scalar(ctx,
+		`histogram_quantile(0.95, sum by (le) (rate(pim_http_request_duration_seconds_bucket{service="gateway",route!~"/api/v1/admin/.*",route!="/ws"}[1m]))) * 1000`)
+	if !ok || math.IsNaN(v) {
+		return 0, false
+	}
+	if math.IsInf(v, 0) {
+		return 0, false
+	}
+	return int64(math.Round(v)), true
+}
+
+func computeErrorRateFromProm(ctx context.Context) (float64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`sum(rate(pim_http_requests_total{service="gateway",status=~"4..|5..",route!~"/api/v1/admin/.*"}[1m])) / sum(rate(pim_http_requests_total{service="gateway",route!~"/api/v1/admin/.*"}[1m]))`)
+	if !ok || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return math.Round(v*100000) / 100000, true
+}
+
+// computePushSuccessRateFromProm 返回集群 push 成功率（0~100 的百分比，与本地口径一致）。
+func computePushSuccessRateFromProm(ctx context.Context) (float64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`(sum(rate(pim_gateway_push_total{result="ok"}[1m])) / sum(rate(pim_gateway_push_total[1m]))) * 100`)
+	if !ok || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return math.Round(v*100) / 100, true
+}
+
+func computeKafkaRetryTotalFromProm(ctx context.Context) (float64, bool) {
+	v, _, ok := promql.Scalar(ctx, `sum(pim_kafka_messages_total{result="handler_error"})`)
+	if !ok || math.IsNaN(v) {
+		return 0, false
+	}
+	return v, true
+}
+
+// computeMsgE2EP95MSFromProm 返回服务端侧 e2e p95（毫秒）。
+// 对应 bench.e2e 的服务端段：sender gateway WS 入口 → receiver gateway 推送出口。
+// 直方图 pim_im_e2e_server_seconds 只在 im_push_consumer 推送成功后 Observe。
+func computeMsgE2EP95MSFromProm(ctx context.Context) (int64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`histogram_quantile(0.95, sum by (le) (rate(pim_im_e2e_server_seconds_bucket[5m]))) * 1000`)
+	if !ok || math.IsNaN(v) || v <= 0 {
+		return 0, false
+	}
+	return int64(math.Round(v)), true
+}
+
+// computeWSAckP95MSFromProm 返回 gateway WS 收帧 → 回 ack 的 p95（毫秒）。
+// 对应 bench.ack 的服务端段（不含客户端网络 RTT）。
+func computeWSAckP95MSFromProm(ctx context.Context) (int64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`histogram_quantile(0.95, sum by (le) (rate(pim_gateway_ws_send_duration_seconds_bucket[5m]))) * 1000`)
+	if !ok || math.IsNaN(v) || v <= 0 {
+		return 0, false
+	}
+	return int64(math.Round(v)), true
+}
+
+func computeWSAckP99MSFromProm(ctx context.Context) (int64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`histogram_quantile(0.99, sum by (le) (rate(pim_gateway_ws_send_duration_seconds_bucket[5m]))) * 1000`)
+	if !ok || math.IsNaN(v) || v <= 0 {
+		return 0, false
+	}
+	return int64(math.Round(v)), true
+}
+
+func computeMsgE2EP99MSFromProm(ctx context.Context) (int64, bool) {
+	v, _, ok := promql.Scalar(ctx,
+		`histogram_quantile(0.99, sum by (le) (rate(pim_im_e2e_server_seconds_bucket[5m]))) * 1000`)
+	if !ok || math.IsNaN(v) || v <= 0 {
+		return 0, false
+	}
+	return int64(math.Round(v)), true
+}
+
+// collectServiceInstancesFromProm 用 PromQL up{job=~"pim-.*"} 枚举所有 service 实例的 up 状态，
+// 让前端能看到「哪一个实例挂了」，而不是只看到「本网关能否联上依赖」。
+// 返回 instances 列表和 [upCount, totalCount] 汇总；Prom 不可用时返回 ok=false。
+func collectServiceInstancesFromProm(ctx context.Context) ([]gin.H, int, int, bool) {
+	samples, _, ok := promql.InstantVec(ctx, `up{job=~"pim-.*"}`)
+	if !ok {
+		return nil, 0, 0, false
+	}
+	out := make([]gin.H, 0, len(samples))
+	upCount := 0
+	for _, s := range samples {
+		job := s.Labels["job"]
+		inst := s.Labels["instance"]
+		service := s.Labels["service"]
+		if service == "" {
+			service = strings.TrimPrefix(job, "pim-")
+		}
+		isUp := s.Value >= 0.5
+		if isUp {
+			upCount++
+		}
+		out = append(out, gin.H{
+			"job":      job,
+			"instance": inst,
+			"service":  service,
+			"up":       isUp,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		si, _ := out[i]["service"].(string)
+		sj, _ := out[j]["service"].(string)
+		if si != sj {
+			return si < sj
+		}
+		ii, _ := out[i]["instance"].(string)
+		ij, _ := out[j]["instance"].(string)
+		return ii < ij
+	})
+	return out, upCount, len(out), true
 }
 
 func computeIngressQPS(apiQuality []gin.H) float64 {
@@ -680,7 +1037,7 @@ func toFloat64(v interface{}) float64 {
 	}
 }
 
-func (s *HTTPServer) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
+func (s *Service) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
 	type svc struct {
 		ID  string
 		URL string
@@ -692,8 +1049,8 @@ func (s *HTTPServer) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
 		{ID: "friend", URL: config.AdminHealthFriendURL},
 		{ID: "conversation", URL: config.AdminHealthConversationURL},
 		{ID: "group", URL: config.AdminHealthGroupURL},
-		{ID: "file", URL: s.fileServiceBaseURL + "/health"},
-		{ID: "log", URL: s.logServiceBaseURL + "/health"},
+		{ID: "file", URL: s.FileServiceBaseURL + "/health"},
+		{ID: "log", URL: s.LogServiceBaseURL + "/health"},
 	}
 	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	items := make([]gin.H, 0, len(targets))
@@ -732,11 +1089,31 @@ func (s *HTTPServer) collectServiceHealth(ctx context.Context) ([]gin.H, int) {
 	return items, downCount
 }
 
-func gatherMetricFamilies() map[string]*dto.MetricFamily {
+// gatherMetricFamilies 优先从 Gateway 的 /metrics 拉文本解析；失败则回退为 observe 本进程 Gatherer。
+// 第二个返回值为 true 表示已成功从 Gateway 拉到非空指标族（与迁出前「落在网关内读自身」对齐）。
+func (s *Service) gatherMetricFamilies() (map[string]*dto.MetricFamily, bool) {
+	scrape := strings.TrimSpace(s.GatewayMetricsScrapeURL)
+	if scrape != "" {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, scrape, nil)
+		if err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil && resp != nil {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					// prometheus/common 新 API：零值 TextParser 的 scheme 为 unset 会 panic，须显式 UTF8 校验方案。
+					p := expfmt.NewTextParser(model.UTF8Validation)
+					m, err := p.TextToMetricFamilies(resp.Body)
+					if err == nil && len(m) > 0 {
+						return m, true
+					}
+				}
+			}
+		}
+	}
 	out := map[string]*dto.MetricFamily{}
 	mfs, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
-		return out
+		return out, false
 	}
 	for _, mf := range mfs {
 		if mf == nil || mf.Name == nil {
@@ -744,7 +1121,7 @@ func gatherMetricFamilies() map[string]*dto.MetricFamily {
 		}
 		out[mf.GetName()] = mf
 	}
-	return out
+	return out, false
 }
 
 func buildAPIQuality(mfs map[string]*dto.MetricFamily) []gin.H {
@@ -792,6 +1169,7 @@ func buildAPIQuality(mfs map[string]*dto.MetricFamily) []gin.H {
 			"qps":            0, // filled by fillRateSnapshots.
 			"error_rate":     errorRate,
 			"p95_latency_ms": estimateHTTPRouteP95MS(mfs, k.route),
+			"p99_latency_ms": 0,
 		})
 	}
 	return out
@@ -821,6 +1199,7 @@ func mergeAPIQualityWithRouteCatalog(observed []gin.H, catalog []string) []gin.H
 			"qps":            0,
 			"error_rate":     0,
 			"p95_latency_ms": 0,
+			"p99_latency_ms": 0,
 		})
 	}
 	return merged
@@ -1006,31 +1385,6 @@ func buildAlertsOverview(downCount int, messagePipeline []gin.H, slo gin.H) gin.
 	}
 }
 
-// handleAdminDrillHTTP500 intentionally returns 500 for alert drill.
-func (s *HTTPServer) handleAdminDrillHTTP500(c *gin.Context) {
-	c.JSON(http.StatusInternalServerError, gin.H{
-		"ok":      false,
-		"message": "synthetic 500 for observability drill",
-	})
-}
-
-// handleAdminDrillLatency sleeps for given milliseconds to simulate latency.
-func (s *HTTPServer) handleAdminDrillLatency(c *gin.Context) {
-	ms, _ := strconv.Atoi(strings.TrimSpace(c.Query("sleep_ms")))
-	if ms <= 0 {
-		ms = 350
-	}
-	if ms > 5000 {
-		ms = 5000
-	}
-	time.Sleep(time.Duration(ms) * time.Millisecond)
-	c.JSON(http.StatusOK, gin.H{
-		"ok":       true,
-		"sleep_ms": ms,
-		"message":  "synthetic latency for observability drill",
-	})
-}
-
 func metricGauge(mfs map[string]*dto.MetricFamily, name string) int64 {
 	mf := mfs[name]
 	if mf == nil || len(mf.Metric) == 0 {
@@ -1205,7 +1559,11 @@ func estimateHTTPRouteP95MS(mfs map[string]*dto.MetricFamily, route string) int6
 			if le == prevLE || cur <= prevCount {
 				return int64(math.Round(le * 1000))
 			}
-			ratio := (target - prevCount) / (cur - prevCount)
+			denom := cur - prevCount
+			if denom <= 0 {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / denom
 			v := prevLE + ratio*(le-prevLE)
 			if v < 0 {
 				v = 0
@@ -1242,6 +1600,9 @@ func estimateHTTPP95MS(mfs map[string]*dto.MetricFamily) int64 {
 		if strings.HasPrefix(route, "/api/v1/admin/") {
 			continue
 		}
+		if route == "/ws" {
+			continue
+		}
 		h := metric.GetHistogram()
 		if h == nil {
 			continue
@@ -1271,7 +1632,11 @@ func estimateHTTPP95MS(mfs map[string]*dto.MetricFamily) int64 {
 			if le == prevLE || cur <= prevCount {
 				return int64(math.Round(le * 1000))
 			}
-			ratio := (target - prevCount) / (cur - prevCount)
+			denom := cur - prevCount
+			if denom <= 0 {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / denom
 			v := prevLE + ratio*(le-prevLE)
 			if v < 0 {
 				v = 0
@@ -1327,7 +1692,11 @@ func estimateKafkaTopicP95MS(mfs map[string]*dto.MetricFamily, topic string) int
 			if le == prevLE || cur <= prevCount {
 				return int64(math.Round(le * 1000))
 			}
-			ratio := (target - prevCount) / (cur - prevCount)
+			denom := cur - prevCount
+			if denom <= 0 {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / denom
 			v := prevLE + ratio*(le-prevLE)
 			if v < 0 {
 				v = 0
@@ -1483,7 +1852,11 @@ func estimateHistogramP95MSByLabels(mfs map[string]*dto.MetricFamily, metricName
 			if le == prevLE || cur <= prevCount {
 				return int64(math.Round(le * 1000))
 			}
-			ratio := (target - prevCount) / (cur - prevCount)
+			denom := cur - prevCount
+			if denom <= 0 {
+				return int64(math.Round(le * 1000))
+			}
+			ratio := (target - prevCount) / denom
 			v := prevLE + ratio*(le-prevLE)
 			if v < 0 {
 				v = 0

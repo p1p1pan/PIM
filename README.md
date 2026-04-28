@@ -90,8 +90,9 @@ go run .\cmd\all
 
 访问前端：
 
-- 本地静态文件：`web/index.html`
-- 浏览器 API 入口：默认经 Nginx 负载均衡 **`http://localhost:28080`**（`gateway-lb` → 26080/26180）；需与 `go run ./cmd/all`、infra compose 一并启动。
+- **推荐（与 LB 同源）**：先 `docker compose ... up -d` 启动 **gateway-lb**，浏览器打开 **`http://localhost:28080/`**（由 Nginx 托管 `web/index.html`，`/api`、`/ws` 仍负载到 gateway）。
+- 或直接双击本地 **`web/index.html`**（`file://` 时 API 默认指向 **`http://localhost:28080`**）。
+- 浏览器 API/WebSocket：与 **`go run ./cmd/all`**、infra compose 一并启动后，经 Nginx **`http://localhost:28080`**（`gateway-lb` → 26080/26180）。
 
 ### 方式 B：Minikube 全量部署
 

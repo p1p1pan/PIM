@@ -152,8 +152,16 @@ var (
 	AdminHealthFriendURL       = getenv("ADMIN_HEALTH_FRIEND_URL", "http://localhost:26002/health")
 	AdminHealthConversationURL = getenv("ADMIN_HEALTH_CONVERSATION_URL", "http://localhost:26003/health")
 	AdminHealthGroupURL        = getenv("ADMIN_HEALTH_GROUP_URL", "http://localhost:26004/health")
-	// 观测聚合使用的 Prometheus 查询地址（用于跨 gateway 实例汇总 QPS）。
-	PrometheusQueryURL = getenv("PROMETHEUS_QUERY_URL", "http://localhost:9090")
+	// 观测聚合使用的 Prometheus 查询地址（用于跨 gateway 实例汇总 QPS）。默认 127.0.0.1 避免部分环境下 localhost 走 IPv6 与监听不一致导致连不上。
+	PrometheusQueryURL = getenv("PROMETHEUS_QUERY_URL", "http://127.0.0.1:9090")
+
+	// observe-service 独立 HTTP 与写入 etcd 的公开地址（供 Prom file_sd / 其他服务发现）。
+	ObserveHTTPAddr         = getenv("OBSERVE_HTTP_ADDR", ":26280")
+	ServiceAdvertiseHTTPAddr = getenv("SERVICE_ADVERTISE_HTTP_ADDR", "http://127.0.0.1:26280")
+	// 迁出后 observe 为补全本机 mfs 快照，可拉取任一 gateway 的 /metrics 文本（默认 26080）。
+	ObserveGatewayMetricsScrapeURL = getenv("OBSERVE_GATEWAY_METRICS_SCRAPE_URL", "http://127.0.0.1:26080/metrics")
+	// 逗号分隔的 /api/... 路径，用于与 gateway apiRouteCatalog 对齐；空则用 observe.DefaultAPIRouteCatalog()。
+	ObserveAPIRouteCatalog = getenv("OBSERVE_API_ROUTE_CATALOG", "")
 	LogTopic                   = getenv("LOG_TOPIC", "log-topic")
 	LogInfoSamplePct           = clampPct(getenvInt("LOG_INFO_SAMPLE_PCT", 100))
 

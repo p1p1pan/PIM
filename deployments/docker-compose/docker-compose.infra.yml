@@ -185,6 +185,7 @@ services:
     volumes:
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../observability/pim-alert-rules.yml:/etc/prometheus/rules/pim-alert-rules.yml:ro
+      - ../observability/file_sd:/etc/prometheus/file_sd:ro
       - pim_prometheusdata:/prometheus
     ports:
       - "9090:9090"
@@ -217,6 +218,8 @@ services:
       - "28080:18080"
     volumes:
       - ../docker/nginx.gateway-lb.conf:/etc/nginx/nginx.conf:ro
+      # 前端静态页（web/index.html 等），与 LB 同一端口访问
+      - ../../web:/usr/share/nginx/html:ro
 
 volumes:
   pim_pgdata:

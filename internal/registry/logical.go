@@ -9,4 +9,6 @@ const (
 	LogicalGroup        = "group"
 	LogicalFile         = "file"
 	LogicalGatewayPush  = "gateway-push"
+	// LogicalObserve 为可观测/管理只读面 HTTP（非 gRPC）；etcd 中仍复用 Endpoints 前缀协议。
+	LogicalObserve = "observe"
 )

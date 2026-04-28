@@ -37,8 +37,8 @@ docker compose -f .\deployments\docker-compose\docker-compose.infra.yml stop
 
 ### 验证
 
-- 确认 **`gateway-lb`** 已随 infra compose 启动（宿主 **`http://localhost:28080`** → Nginx → 两台 gateway）。
-- 打开 `web/pages/login.html`（`file://` 时 API 默认指向 **`http://localhost:28080`**）。
+- 确认 **`gateway-lb`** 已随 infra compose 启动（宿主 **`http://localhost:28080`** → Nginx：**静态 `web/` +** 反向代理 → 两台 gateway）。
+- 浏览器打开 **`http://localhost:28080/`** 即「统一入口」（`web/index.html`）；与 **`file://`** 打开本地文件等价时，`shared.js` 会以同源调用 `/api`、`/ws`，无需改端口。
 - 登录成功，收发消息正常。
 
 ### 注意点

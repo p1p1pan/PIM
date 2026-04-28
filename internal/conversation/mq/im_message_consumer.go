@@ -31,6 +31,7 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 		return nil
 	}
 	kms := make([]model.KafkaMessage, 0, len(msgs))
+	ingressTsByIdx := make([]int64, 0, len(msgs))
 	inputs := make([]conversationservice.SendInput, 0, len(msgs))
 	for _, msg := range msgs {
 		km, err := model.DecodeKafkaMessage(msg.Value)
@@ -51,6 +52,9 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 		if km.ClientMsgID == "" {
 			km.ClientMsgID = uuid.NewString()
 		}
+		// 读取 sender 写入的入口时间；老消息没带 header 时记 0，下游据此跳过 e2e 观测。
+		ts, _ := kafka.ExtractIngressTsNsFromHeaders(msg.Headers)
+		ingressTsByIdx = append(ingressTsByIdx, ts)
 		kms = append(kms, km)
 		inputs = append(inputs, conversationservice.SendInput{
 			FromID:      km.FromUserID,
@@ -98,12 +102,14 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 	}
 
 	var pushBatch []model.KafkaMessage
+	var pushIngressTs []int64
 	for i, km := range kms {
 		if saved[i] == nil {
 			continue
 		}
 		if created[i] {
 			pushBatch = append(pushBatch, km)
+			pushIngressTs = append(pushIngressTs, ingressTsByIdx[i])
 		}
 		if !config.KafkaConversationConsumerVerboseLog {
 			continue
@@ -120,13 +126,14 @@ func handleImMessageBatch(ctx context.Context, svc *conversationservice.Service,
 		})
 	}
 	if len(pushBatch) > 0 {
-		applyRealtimeSideEffectsBatch(ctx, rdb, producer, pushBatch)
+		applyRealtimeSideEffectsBatch(ctx, rdb, producer, pushBatch, pushIngressTs)
 	}
 	return nil
 }
 
 // applyRealtimeSideEffectsBatch 未读计数与 push topic 使用 Pipeline + 批量 SendMessages，降低高 QPS 下 Redis/Kafka 往返。
-func applyRealtimeSideEffectsBatch(ctx context.Context, rdb *redis.Client, producer *kafka.Producer, kms []model.KafkaMessage) {
+// ingressTsByIdx 与 kms 一一对应：用来把 sender 侧的 ingress_ts_ns 透传到 im-message-push，支撑 receiver 侧 e2e 观测。
+func applyRealtimeSideEffectsBatch(ctx context.Context, rdb *redis.Client, producer *kafka.Producer, kms []model.KafkaMessage, ingressTsByIdx []int64) {
 	if len(kms) == 0 {
 		return
 	}
@@ -159,11 +166,17 @@ func applyRealtimeSideEffectsBatch(ctx context.Context, rdb *redis.Client, produ
 		if err != nil {
 			continue
 		}
-		msgs = append(msgs, &sarama.ProducerMessage{
+		pm := &sarama.ProducerMessage{
 			Topic: "im-message-push",
 			Key:   sarama.StringEncoder(convKey),
 			Value: sarama.ByteEncoder(data),
-		})
+		}
+		if i < len(ingressTsByIdx) && ingressTsByIdx[i] > 0 {
+			pm.Headers = []sarama.RecordHeader{
+				{Key: []byte(kafka.HeaderIngressTsNs), Value: kafka.EncodeIngressTsNs(ingressTsByIdx[i])},
+			}
+		}
+		msgs = append(msgs, pm)
 	}
 	if len(msgs) == 0 {
 		return

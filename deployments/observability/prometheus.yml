@@ -1,46 +1,92 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    cluster: pim
+    env: dev
 
 rule_files:
   - /etc/prometheus/rules/pim-alert-rules.yml
 
+# 注意：Prometheus 运行在 docker 里，业务进程跑在宿主机，
+# 所以统一用 host.docker.internal + 宿主机端口。
+# 每个多实例服务把所有实例都列进 targets；job 维度聚合用 sum/histogram_quantile 即可。
 scrape_configs:
   - job_name: pim-gateway
+    metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8080"]
+      - targets:
+          - host.docker.internal:26080
+          - host.docker.internal:26180
+        labels:
+          service: gateway
 
   - job_name: pim-auth-service
-    static_configs:
-      - targets: ["host.docker.internal:9000"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26000
+          - host.docker.internal:26100
+        labels:
+          service: auth-service
 
   - job_name: pim-user-service
-    static_configs:
-      - targets: ["host.docker.internal:9001"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26001
+          - host.docker.internal:26101
+        labels:
+          service: user-service
 
   - job_name: pim-friend-service
-    static_configs:
-      - targets: ["host.docker.internal:9002"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26002
+        labels:
+          service: friend-service
 
   - job_name: pim-conversation-service
-    static_configs:
-      - targets: ["host.docker.internal:9003"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26003
+          - host.docker.internal:26103
+          - host.docker.internal:26203
+        labels:
+          service: conversation-service
 
   - job_name: pim-group-service
-    static_configs:
-      - targets: ["host.docker.internal:9004"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26004
+          - host.docker.internal:26104
+          - host.docker.internal:26204
+        labels:
+          service: group-service
 
   - job_name: pim-file-service
-    static_configs:
-      - targets: ["host.docker.internal:9006"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26006
+        labels:
+          service: file-service
 
   - job_name: pim-log-service
-    static_configs:
-      - targets: ["host.docker.internal:9016"]
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:26016
+        labels:
+          service: log-service
+
+  # observe-service：宿主机端口由 deployments/observability/file_sd/observe.json 提供，可用 cmd/pim-prom-etcd-sd 从 etcd 刷新。
+  - job_name: pim-observe
+    metrics_path: /metrics
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/file_sd/observe.json
+        refresh_interval: 30s

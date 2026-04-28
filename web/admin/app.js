@@ -9,7 +9,14 @@ createApp({
       // overview
       overview: {
         service_health: [],
+        service_instances: [],
+        service_health_summary: { up: 0, total: 0 },
+        sources: {},
+        scopes: {},
         api_quality: [],
+        bench_im_ws: {},
+        bench_run: null,
+        bench_runs: {},
         message_pipeline: [],
         gateway_connections: { node: "", active_connections: 0, connect_rate: 0, disconnect_rate: 0 },
         timeseries: {
@@ -38,11 +45,15 @@ createApp({
           msg_e2e_p95_target_ms: 500,
           msg_e2e_p95_now_ms: 0,
           msg_e2e_p95_met: false,
+          ws_ack_p99_now_ms: 0,
+          msg_e2e_p99_now_ms: 0,
         },
         generated_at: "",
+        overview_meta: {},
       },
       overviewWindow: "15m",
       overviewAutoRefresh: true,
+      serviceInstanceOpen: {},
       apiVizSearch: "",
       apiVizSelectedKeys: [],
       apiVizPickerOpen: false,
@@ -67,6 +78,32 @@ createApp({
       dlqLimit: 20,
       dlqOffset: 0,
     };
+  },
+  computed: {
+    /** 各压测槽位一块卡片；同槽再次 POST 会覆盖（见 observe bench_run）。 */
+    benchRunPanels() {
+      const o = this.overview || {};
+      const brs = o.bench_runs;
+      const rows = [];
+      const keys =
+        brs && typeof brs === "object"
+          ? Object.keys(brs)
+              .filter((k) => brs[k] && typeof brs[k] === "object")
+              .sort()
+          : [];
+      for (const slotKey of keys) {
+        const row = brs[slotKey];
+        rows.push({ slotKey, row, ...window.benchSlotMeta(slotKey, row) });
+      }
+      if (rows.length) return rows;
+      const leg = o.bench_run;
+      if (leg && typeof leg === "object") {
+        const m = leg.measure === "e2e" ? "e2e" : "ack";
+        const sk = `msg-latency:${m}`;
+        rows.push({ slotKey: sk, row: leg, ...window.benchSlotMeta(sk, leg) });
+      }
+      return rows;
+    },
   },
   methods: window.buildAdminMethods(),
   mounted() {

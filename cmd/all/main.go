@@ -238,6 +238,17 @@ func main() {
 		"ELASTICSEARCH_URL": getenvOr("ELASTICSEARCH_URL", "http://localhost:9200"),
 	}))
 
+	observeHTTP := getenvOr("OBSERVE1_HTTP_ADDR", ":26280")
+	observe1 := newGoRunService("observe-service-1", "./cmd/observe-service", combine(common, map[string]string{
+		"OBSERVE_HTTP_ADDR":         observeHTTP,
+		"SERVICE_ADVERTISE_HTTP_ADDR": getenvOr("OBSERVE1_SERVICE_ADVERTISE_HTTP_ADDR", "http://127.0.0.1"+observeHTTP),
+		"SERVICE_INSTANCE_ID":       getenvOr("OBSERVE1_SERVICE_INSTANCE_ID", "observe-service-1"),
+		"LOG_SERVICE_HTTP_URL":      getenvOr("LOG1_HTTP_URL", "http://localhost"+log1HTTP),
+		"FILE_SERVICE_HTTP_URL":     getenvOr("FILE1_HTTP_URL", "http://localhost"+getenvOr("FILE1_HTTP_ADDR", ":26006")),
+		"PROMETHEUS_QUERY_URL":      getenvOr("PROMETHEUS_QUERY_URL", "http://localhost:9090"),
+		"OBSERVE_GATEWAY_METRICS_SCRAPE_URL": getenvOr("OBSERVE1_GATEWAY_METRICS_SCRAPE_URL", "http://127.0.0.1:26080/metrics"),
+	}))
+
 	gw1 := newGoRunService("gateway-1", "./cmd/gateway", combine(common, map[string]string{
 		"GATEWAY_HTTP_ADDR":           getenvOr("GATEWAY1_HTTP_ADDR", ":26080"),
 		"GATEWAY_PUSH_GRPC_ADDR":      getenvOr("GATEWAY1_PUSH_GRPC_ADDR", ":26090"),
@@ -260,7 +271,7 @@ func main() {
 	waves := [][]*service{
 		{user1, user2, friend1},
 		{auth1, auth2, file1},
-		{conv1, conv2, conv3, group1, group2, group3, log1},
+		{conv1, conv2, conv3, group1, group2, group3, log1, observe1},
 		{gw1, gw2},
 	}
 	var services []*service

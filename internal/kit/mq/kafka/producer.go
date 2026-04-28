@@ -102,6 +102,13 @@ func NewProducer(cfg *ProducerConfig) *Producer {
 
 // SendMessage 发送一条消息到指定 topic。
 func (p *Producer) SendMessage(ctx context.Context, topic, key string, value []byte) error {
+	return p.SendMessageWithHeaders(ctx, topic, key, value, nil)
+}
+
+// SendMessageWithHeaders 发送一条带 Kafka headers 的消息；
+// headers 用于透传 trace、ingress_ts_ns 等元数据，不会改变消息体。
+// nil 或空 headers 时行为与 SendMessage 完全一致。
+func (p *Producer) SendMessageWithHeaders(ctx context.Context, topic, key string, value []byte, headers map[string][]byte) error {
 	_ = ctx // 预留上下文扩展位（超时/trace），当前 sarama sync producer 未直接使用。
 	if p == nil || p.producer == nil {
 		return errors.New("kafka producer not initialized")
@@ -112,6 +119,13 @@ func (p *Producer) SendMessage(ctx context.Context, topic, key string, value []b
 	}
 	if key != "" {
 		msg.Key = sarama.StringEncoder(key)
+	}
+	if len(headers) > 0 {
+		rh := make([]sarama.RecordHeader, 0, len(headers))
+		for k, v := range headers {
+			rh = append(rh, sarama.RecordHeader{Key: []byte(k), Value: v})
+		}
+		msg.Headers = rh
 	}
 
 	partition, offset, err := p.producer.SendMessage(msg)

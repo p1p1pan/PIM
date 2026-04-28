@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -12,14 +13,18 @@ import (
 
 	"pim/internal/conversation/model"
 	pbconversation "pim/internal/conversation/pb"
+	"pim/internal/kit/mq/kafka"
 	observemetrics "pim/internal/kit/observability/metrics"
 )
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 // MessageProducer 封装 Kafka 生产能力，便于在 WebSocket 入口复用。
+// SendMessageWithHeaders 用于透传 ingress_ts_ns 做 e2e 测量；
+// 旧实现只有 SendMessage 时 WebSocketHandler 会优雅降级，仅跳过 e2e header。
 type MessageProducer interface {
 	SendMessage(ctx context.Context, topic, key string, value []byte) error
+	SendMessageWithHeaders(ctx context.Context, topic, key string, value []byte, headers map[string][]byte) error
 }
 
 // WebSocketHandler 负责接入 WebSocket 并把上行消息写入 Kafka。
@@ -40,6 +45,8 @@ func WebSocketHandler(client pbconversation.ConversationServiceClient, producer 
 			if err := conn.ReadJSON(&msg); err != nil {
 				break
 			}
+			// t0 = 收到 WS 帧的时刻；既作为 ack 计时起点，也写入 Kafka header 做 e2e 起点。
+			t0 := time.Now()
 			if msg.ClientMsgID == "" {
 				// Ensure every message has a stable event_id for cross-service tracing.
 				msg.ClientMsgID = uuid.NewString()
@@ -53,16 +60,26 @@ func WebSocketHandler(client pbconversation.ConversationServiceClient, producer 
 					Content:     msg.Content,
 					ClientMsgID: msg.ClientMsgID,
 				}
+				result := "ok"
 				if data, err := model.EncodeKafkaMessagePB(kmsg); err != nil {
 					log.Printf("ws protobuf marshal kafka message: %v", err)
+					observemetrics.ObserveGatewayWSSendDuration("im", "error", time.Since(t0).Seconds())
 					continue
-				} else if err := producer.SendMessage(context.Background(), "im-message", conversationKey(userID, msg.To), data); err != nil {
-					log.Printf("ws kafka send: %v", err)
-					_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack_error", ClientMsgID: msg.ClientMsgID, Error: err.Error()})
 				} else {
-					// 入队成功即确认，便于客户端测量「发送路径」而不等待对端 Push（端到端见 bench-msg-latency -measure e2e）。
-					_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack", ClientMsgID: msg.ClientMsgID})
+					headers := map[string][]byte{
+						kafka.HeaderIngressTsNs: kafka.EncodeIngressTsNs(t0.UnixNano()),
+					}
+					if err := producer.SendMessageWithHeaders(context.Background(), "im-message", conversationKey(userID, msg.To), data, headers); err != nil {
+						log.Printf("ws kafka send: %v", err)
+						_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack_error", ClientMsgID: msg.ClientMsgID, Error: err.Error()})
+						result = "error"
+					} else {
+						// 入队成功即确认，便于客户端测量「发送路径」而不等待对端 Push（端到端见 bench-msg-latency -measure e2e）。
+						_ = writeJSONToUser(userID, model.WSServerAck{Type: "ack", ClientMsgID: msg.ClientMsgID})
+					}
 				}
+				// 对齐 bench.ack：从入口到 ack 写出的全部耗时都落 histogram。
+				observemetrics.ObserveGatewayWSSendDuration("im", result, time.Since(t0).Seconds())
 			}
 		}
 		deleteUserConn(userID)

@@ -13,7 +13,6 @@ import (
 // 为提高可读性，按能力域拆成多个 registerXxxRoutes。
 func (s *HTTPServer) RegisterRoutes(r *gin.Engine) {
 	authGroup := r.Group("/api/v1", authhandler.GRPCMiddleware(s.authClient))
-	publicGroup := r.Group("/api/v1")
 
 	r.GET("/ws", authhandler.GRPCMiddleware(s.authClient), s.handleWS)
 	r.POST("/api/v1/login", s.handleLogin)
@@ -23,8 +22,7 @@ func (s *HTTPServer) RegisterRoutes(r *gin.Engine) {
 	s.registerConversationRoutes(authGroup)
 	s.registerGroupRoutes(authGroup)
 	s.registerFileRoutes(authGroup)
-	s.registerLogRoutes(publicGroup)
-	s.registerPublicAdminRoutes(publicGroup)
+	// 日志与只读 admin（health/metrics/observability overview）已迁至独立 cmd/observe-service，经 gateway-lb 反代。
 	s.registerAdminRoutes(authGroup)
 	s.captureAPIRouteCatalog(r)
 }
@@ -90,12 +88,6 @@ func (s *HTTPServer) registerFileRoutes(authGroup *gin.RouterGroup) {
 	authGroup.GET("/files/:id", s.handleFileGet)
 }
 
-func (s *HTTPServer) registerLogRoutes(publicGroup *gin.RouterGroup) {
-	publicGroup.GET("/logs/trace/:trace_id", s.handleLogsByTrace)
-	publicGroup.GET("/logs/search", s.handleLogsByEvent)
-	publicGroup.GET("/logs/filter", s.handleLogsFilter)
-}
-
 func (s *HTTPServer) registerAdminRoutes(authGroup *gin.RouterGroup) {
 	authGroup.POST("/admin/observability/drill/http-500", s.handleAdminDrillHTTP500)
 	authGroup.GET("/admin/observability/drill/latency", s.handleAdminDrillLatency)
@@ -103,10 +95,3 @@ func (s *HTTPServer) registerAdminRoutes(authGroup *gin.RouterGroup) {
 	authGroup.POST("/admin/file-scan/dlq/:file_id/replay", s.handleFileScanDLQReplay)
 }
 
-// registerPublicAdminRoutes 暴露只读监督接口，便于无需登录即可查看运行态。
-// 写操作（如 drill、DLQ replay）仍放在鉴权路由，避免被匿名调用。
-func (s *HTTPServer) registerPublicAdminRoutes(publicGroup *gin.RouterGroup) {
-	publicGroup.GET("/admin/health", s.handleAdminHealth)
-	publicGroup.GET("/admin/metrics", s.handleAdminMetrics)
-	publicGroup.GET("/admin/observability/overview", s.handleAdminObservabilityOverview)
-}

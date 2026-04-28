@@ -1,3 +1,51 @@
+/** 把 overview.bench_runs 规范成「槽位键 → 快照」；兼容旧接口仅有 e2e/ack 顶层的形状。 */
+function normalizeBenchRunsPayload(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const keys = Object.keys(raw);
+  const legacyOnly =
+    keys.some((k) => k === "e2e" || k === "ack") &&
+    !keys.some((k) => String(k).includes(":"));
+  if (legacyOnly) {
+    const o = {};
+    if (raw.e2e && typeof raw.e2e === "object") o["msg-latency:e2e"] = raw.e2e;
+    if (raw.ack && typeof raw.ack === "object") o["msg-latency:ack"] = raw.ack;
+    return o;
+  }
+  const o = {};
+  for (const k of keys) {
+    const v = raw[k];
+    if (v && typeof v === "object") o[k] = v;
+  }
+  return o;
+}
+
+/** 槽位键（如 msg-latency:e2e）→ 展示标签与样式 */
+function benchSlotMeta(slotKey, row) {
+  const m = String(row?.measure || "");
+  const sk = String(slotKey || "");
+  if (sk.startsWith("group-broadcast:")) {
+    return {
+      label: m === "e2e" ? "群聊 E2E" : "群聊 ACK",
+      tagClass: m === "e2e" ? "bench-tag-e2e" : "bench-tag-ack",
+      isGroup: true,
+    };
+  }
+  if (sk.startsWith("msg-latency:")) {
+    return {
+      label: m === "e2e" ? "单聊 E2E" : "单聊 ACK",
+      tagClass: m === "e2e" ? "bench-tag-e2e" : "bench-tag-ack",
+      isGroup: false,
+    };
+  }
+  return {
+    label: m === "e2e" ? "E2E" : "ACK",
+    tagClass: m === "e2e" ? "bench-tag-e2e" : "bench-tag-ack",
+    isGroup: false,
+  };
+}
+
+window.benchSlotMeta = benchSlotMeta;
+
 window.buildAdminMethods = function buildAdminMethods() {
   return {
     backIM() {
@@ -64,6 +112,20 @@ window.buildAdminMethods = function buildAdminMethods() {
       const arr = Array.isArray(series) ? series : [];
       if (!arr.length) return "0";
       return Number(arr[arr.length - 1]?.val || 0).toFixed(digits);
+    },
+    formatTriplet(m) {
+      if (!m || typeof m !== "object") return "-";
+      return `${Number(m.avg).toFixed(2)} / ${Number(m.p95).toFixed(2)} / ${Number(m.p99).toFixed(2)}`;
+    },
+    formatFixed(v, digits) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
+      return Number(v).toFixed(digits);
+    },
+    formatIsoLocal(s) {
+      if (!s) return "—";
+      const d = new Date(String(s));
+      if (Number.isNaN(d.getTime())) return String(s);
+      return d.toLocaleString();
     },
     onOverviewWindowChange() {
       this.safeCall(() => this.loadMetrics(), "切换时间窗口失败");
@@ -279,7 +341,14 @@ window.buildAdminMethods = function buildAdminMethods() {
         const legacy = await apiRequest("/api/v1/admin/metrics");
         res = {
           service_health: [],
+          service_instances: [],
+          service_health_summary: { up: 0, total: 0 },
+          sources: {},
+          scopes: {},
           api_quality: [],
+          bench_im_ws: {},
+          bench_run: null,
+          bench_runs: {},
           message_pipeline: [],
           gateway_connections: { node: "gateway-1", active_connections: Number(legacy.online_users || 0), connect_rate: 0, disconnect_rate: 0 },
           timeseries: {
@@ -310,11 +379,17 @@ window.buildAdminMethods = function buildAdminMethods() {
             msg_e2e_p95_met: false,
           },
           generated_at: String(legacy.generated_at || ""),
+          overview_meta: {},
         };
       }
       this.overview = {
         service_health: Array.isArray(res.service_health) ? res.service_health : [],
+        service_instances: Array.isArray(res.service_instances) ? res.service_instances : [],
+        service_health_summary: res.service_health_summary || { up: 0, total: 0 },
         api_quality: Array.isArray(res.api_quality) ? res.api_quality : [],
+        bench_im_ws: res.bench_im_ws && typeof res.bench_im_ws === "object" ? res.bench_im_ws : {},
+        bench_run: res.bench_run && typeof res.bench_run === "object" ? res.bench_run : null,
+        bench_runs: normalizeBenchRunsPayload(res.bench_runs),
         message_pipeline: Array.isArray(res.message_pipeline) ? res.message_pipeline : [],
         gateway_connections: res.gateway_connections || { node: "gateway-1", active_connections: 0, connect_rate: 0, disconnect_rate: 0 },
         timeseries: res.timeseries || {
@@ -344,9 +419,52 @@ window.buildAdminMethods = function buildAdminMethods() {
           msg_e2e_p95_now_ms: 0,
           msg_e2e_p95_met: false,
         },
+        sources: res.sources || {},
+        scopes: res.scopes || {},
+        overview_meta: res.overview_meta && typeof res.overview_meta === "object" ? res.overview_meta : {},
         generated_at: String(res.generated_at || ""),
       };
       this.normalizeApiQualityPage();
+    },
+    // 源徽标：优先 overview.sources[key]。"prom"= 集群 PromQL；"local"= observe 用本机快照（拉 gateway /metrics 或本进程），不是「网关进程内」。
+    sourceLabel(key) {
+      const src = String(this.overview?.sources?.[key] || "local");
+      return src === "prom" ? "Prometheus" : "本机快照";
+    },
+    sourceBadgeClass(key) {
+      const src = String(this.overview?.sources?.[key] || "local");
+      return src === "prom" ? "src-prom" : "src-local";
+    },
+    scopeLabel(key) {
+      const scope = String(this.overview?.scopes?.[key] || "local");
+      return scope === "cluster" ? "集群" : "本机";
+    },
+    serviceInstancesByService() {
+      const list = Array.isArray(this.overview?.service_instances) ? this.overview.service_instances : [];
+      const m = {};
+      for (const it of list) {
+        const svc = String(it?.service || it?.job || "unknown");
+        if (!m[svc]) m[svc] = [];
+        m[svc].push(it);
+      }
+      return m;
+    },
+    serviceInstancesServices() {
+      return Object.keys(this.serviceInstancesByService()).sort();
+    },
+    toggleServiceInstanceGroup(svc) {
+      const cur = { ...(this.serviceInstanceOpen || {}) };
+      cur[svc] = !cur[svc];
+      this.serviceInstanceOpen = cur;
+    },
+    isServiceInstanceGroupOpen(svc) {
+      return !!(this.serviceInstanceOpen && this.serviceInstanceOpen[svc]);
+    },
+    serviceInstanceGroupSummary(svc) {
+      const list = this.serviceInstancesByService()[svc] || [];
+      let up = 0;
+      for (const it of list) if (it && it.up) up++;
+      return { up, total: list.length };
     },
     async initAdminPage() {
       this.loadRecentTraceIDs();

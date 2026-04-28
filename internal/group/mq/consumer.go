@@ -14,12 +14,12 @@ import (
 
 	"pim/internal/config"
 	pbgateway "pim/internal/gateway/pb"
-	"pim/internal/registry"
 	groupmodel "pim/internal/group/model"
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
-	logmodel "pim/internal/log/model"
 	"pim/internal/kit/mq/kafka"
+	logmodel "pim/internal/log/model"
+	"pim/internal/registry"
 )
 
 // StartConsumers 启动 group-message 消费者。

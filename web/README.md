@@ -12,6 +12,7 @@
 
 说明：
 
+- **Docker 中启动 `gateway-lb` 后**，浏览器可访问 **`http://localhost:28080/`**（与 `/api`、`/ws` 同源，见 `deployments/docker/nginx.gateway-lb.conf`）；亦可本地直接打开 `index.html`（`file://`）。
 - 用户主链路：`index -> pages/login -> pages/im`
 - 后台监督链路：`index -> pages/admin`
 - `pages/login` 可返回 `index`

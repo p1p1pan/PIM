@@ -609,6 +609,22 @@ window.buildIMMethods = function buildIMMethods() {
         location.replace("./login.html");
         return;
       }
+      // 启动时先调用 /api/v1/me 一次：服务端用 gRPC 中间件校验 token，
+      // 顺便把最新用户资料（昵称/状态）同步到前端。
+      // 任意错误（401/网络/5xx）都视为登录态失效，清 auth 并回登录页。
+      try {
+        const meRes = await apiRequest("/api/v1/me");
+        const latest = meRes?.user || null;
+        if (latest && Number(latest.id || 0) > 0) {
+          this.currentUser = latest;
+          saveAuth(this.token, latest);
+        }
+      } catch (err) {
+        this.log(`登录态校验失败: ${err?.message || err}`);
+        clearAuth();
+        location.replace("./login.html");
+        return;
+      }
       this.connectWs();
       await this.refreshAll();
       this.startAutoSync();

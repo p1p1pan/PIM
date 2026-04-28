@@ -21,7 +21,8 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "pim_http_request_duration_seconds",
 			Help:    "HTTP request latency in seconds grouped by service/method/route.",
-			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.3, 0.5, 1, 2, 5},
+			// 原最大有限桶 5s 时 histogram_quantile 的 p95 常「顶在 5000ms」；补 3/4/7.5/10/20s 等便于区分尾延迟（+Inf 由 client 补全）。
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.3, 0.5, 1, 2, 3, 4, 5, 7.5, 10, 20, 30},
 		},
 		[]string{"service", "method", "route"},
 	)
