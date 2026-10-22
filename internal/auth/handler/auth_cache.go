@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // authCacheEntry 保存网关鉴权缓存的值与过期时间。

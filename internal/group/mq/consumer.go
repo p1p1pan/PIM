@@ -12,14 +12,14 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	pbgateway "pim/internal/gateway/pb"
 	groupmodel "pim/internal/group/model"
 	grouprepo "pim/internal/group/repo"
 	groupservice "pim/internal/group/service"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 	logmodel "pim/internal/log/model"
-	"pim/internal/registry"
+	"pim/internal/platform/registry"
 )
 
 // StartConsumers 启动 group-message 消费者。

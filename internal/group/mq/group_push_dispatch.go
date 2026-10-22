@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	pbgateway "pim/internal/gateway/pb"
 	groupmodel "pim/internal/group/model"
 	logmodel "pim/internal/log/model"
-	"pim/internal/kit/mq/kafka"
-	"pim/internal/registry"
+	"pim/internal/platform/kit/mq/kafka"
+	"pim/internal/platform/registry"
 )
 
 // pushSavedGroupMessagesBatch 将同 group 批量落库结果按 node 分发到 gateway。

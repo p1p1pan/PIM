@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	pbgroup "pim/internal/group/pb"
 
 	"google.golang.org/protobuf/proto"

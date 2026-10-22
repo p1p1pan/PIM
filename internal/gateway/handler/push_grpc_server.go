@@ -7,11 +7,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	conversationhandler "pim/internal/conversation/handler"
 	"pim/internal/conversation/model"
 	pbgateway "pim/internal/gateway/pb"
-	observemetrics "pim/internal/kit/observability/metrics"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 	pbgroup "pim/proto/group/v1"
 
 	"google.golang.org/protobuf/encoding/protojson"

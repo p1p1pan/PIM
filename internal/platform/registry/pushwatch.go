@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	pbgateway "pim/internal/gateway/pb"
 )
 

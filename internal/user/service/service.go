@@ -6,7 +6,7 @@ import (
 	"time"
 
 	authsvc "pim/internal/auth/service"
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	"pim/internal/user/model"
 	"pim/internal/user/repo"
 
@@ -93,6 +93,18 @@ func (s *Service) GetIDByUsername(username string) (uint, error) {
 		return 0, err
 	}
 	return u.ID, nil
+}
+
+// UpdateNickname 更新显示名并返回最新用户（不含密码）。
+func (s *Service) UpdateNickname(id uint, nickname string) (*model.User, error) {
+	if id == 0 {
+		return nil, errors.New("invalid user id")
+	}
+	nickname = strings.TrimSpace(nickname)
+	if err := s.repo.UpdateNickname(id, nickname); err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func resolveBcryptCost() int {

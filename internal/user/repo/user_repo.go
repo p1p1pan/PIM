@@ -44,3 +44,8 @@ func (r *UserRepo) GetByID(id uint) (*model.User, error) {
 	}
 	return &u, nil
 }
+
+// UpdateNickname 更新显示名。
+func (r *UserRepo) UpdateNickname(id uint, nickname string) error {
+	return r.db.Model(&model.User{}).Where("id = ?", id).Update("nickname", nickname).Error
+}

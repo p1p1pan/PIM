@@ -116,10 +116,16 @@ window.buildIMMethods = function buildIMMethods() {
     },
     connectWs() {
       if (this.ws?.readyState === WebSocket.OPEN) return;
+      this.wsStatus = "连接中";
       this.ws = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(this.token)}`);
       this.ws.onopen = () => {
         this.wsStatus = "已连接";
         this.log("WebSocket 已连接");
+        // 仅重连时全量校准；首次连接由 bootstrap.refreshAll 负责
+        if (this._wsHadConnected) {
+          this.safeCall(() => this.refreshAll(), "重连后同步失败");
+        }
+        this._wsHadConnected = true;
       };
       this.ws.onclose = () => {
         this.wsStatus = "已断开";
@@ -140,105 +146,239 @@ window.buildIMMethods = function buildIMMethods() {
         if (content) {
           try {
             const evt = JSON.parse(content);
-            if (evt?.type === "friend_request_created" || evt?.type === "friend_request_updated") {
-              this.queueLightSync();
+            const typ = String(evt?.type || "");
+            if (typ === "profile_updated") {
+              this.onProfileUpdated(evt);
               return;
             }
-            if (typeof evt?.type === "string" && evt.type.startsWith("group_")) {
-              const gid = Number(evt.group_id || 0);
-              if (evt.type === "group_disbanded" && gid) {
-                this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
-                delete this.groupMessagesMap[gid];
-                delete this.groupDetailsMap[gid];
-                delete this.groupMembersMap[gid];
-                if (Number(this.selectedGroupId || 0) === gid) {
-                  this.selectedGroupId = "";
-                  this.showGroupPanel = false;
+            if (typ === "friend_added") {
+              this.onFriendAdded(evt);
+              return;
+            }
+            if (typ === "friend_removed") {
+              this.onFriendRemoved(evt);
+              return;
+            }
+            if (typ === "friend_request_created" || typ === "friend_request_updated") {
+              this.safeCall(async () => {
+                await this.syncFriendRequests();
+                if (typ === "friend_request_created" && Number(evt.to_user_id || 0) === Number(this.currentUser?.id || 0)) {
+                  this.log("收到一条好友申请");
                 }
-                this.queueLightSync();
-                return;
-              }
-              if ((evt.type === "group_member_removed" || evt.type === "group_member_left") && gid) {
-                const target = Number(evt.target_user_id || evt.user_id || 0);
-                if (target === Number(this.currentUser?.id || 0)) {
-                  this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
-                  delete this.groupMessagesMap[gid];
-                  delete this.groupDetailsMap[gid];
-                  delete this.groupMembersMap[gid];
-                  if (Number(this.selectedGroupId || 0) === gid) this.selectedGroupId = "";
-                  if (Number(this.currentGroupID || 0) === gid) this.showGroupPanel = false;
-                }
-                this.queueLightSync();
-                return;
-              }
-              if ((evt.type === "group_created" || evt.type === "group_updated" || evt.type === "group_member_added" || evt.type === "group_owner_transferred") && gid) {
-                const idx = (this.groupsLocal || []).findIndex((g) => Number(g.id) === gid);
-                const name = String(evt.name || `群聊 #${gid}`);
-                if (idx >= 0) {
-                  this.groupsLocal[idx] = {
-                    ...this.groupsLocal[idx],
-                    name,
-                    owner_user_id: Number(evt.owner_user_id || evt.new_owner_user_id || this.groupsLocal[idx].owner_user_id || 0),
-                    notice: String(evt.notice || this.groupsLocal[idx].notice || ""),
-                  };
-                } else {
-                  this.groupsLocal.unshift({
-                    id: gid,
-                    name,
-                    owner_user_id: Number(evt.owner_user_id || evt.new_owner_user_id || 0),
-                    notice: String(evt.notice || ""),
-                  });
-                }
-                this.queueLightSync();
-                return;
-              }
+              }, "同步好友申请失败");
+              return;
+            }
+            if (typ.startsWith("group_")) {
+              this.onGroupMetaEvent(evt);
+              return;
             }
             if (evt?.group_id && evt?.content) {
-              const gid = Number(evt.group_id);
-              if (gid) {
-                if (!this.groupsLocal.find((g) => Number(g.id) === gid)) {
-                  this.groupsLocal.unshift({
-                    id: gid,
-                    name: String(evt.group_name || `群聊 #${gid}`),
-                  });
-                }
-                const senderID = Number(evt.from_user_id || from || 0);
-                const payload = this.parseMessagePayload(String(evt.content || ""));
-                this.mergeIncomingGroupMessage(gid, {
-                  from_user_id: senderID,
-                  message_type: String(evt.message_type || "text"),
-                  content: payload.text,
-                  ui_type: payload.uiType,
-                  file_id: payload.fileID,
-                  file_name: payload.fileName,
-                  seq: Number(evt.seq || 0),
-                  isMe: senderID === Number(this.currentUser?.id || 0),
-                  mention_meta: evt.mention_meta != null ? String(evt.mention_meta) : "",
-                });
-                if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
-                if (Number(this.selectedGroupId || 0) !== gid) {
-                  this.groupUnreadMap[gid] = Number(this.groupUnreadMap[gid] || 0) + 1;
-                } else {
-                  this.safeCall(() => this.markCurrentGroupRead(), "更新群已读失败");
-                }
-                this.queueLightSync();
-                return;
-              }
+              this.onGroupMessage(evt, from);
+              return;
             }
           } catch (_) {}
         }
         if (!from || !content) return;
-        if (!this.selectedGroupId && this.currentPeerId === from) {
-          const payload = this.parseMessagePayload(content);
-          const item = { from_user_id: from, content: payload.text, isMe: false, ui_type: payload.uiType, file_id: payload.fileID, file_name: payload.fileName };
-          this.messages.push(item);
-          if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
-          this.queueLightSync();
-          return;
-        }
-        this.unreadMap[from] = Number(this.unreadMap[from] || 0) + 1;
-        this.queueLightSync();
+        this.onPrivateMessage(from, content);
       } catch (_) {}
+    },
+    onProfileUpdated(evt) {
+      const uid = Number(evt.user_id || 0);
+      if (!uid) return;
+      const nick = String(evt.nickname || "");
+      const username = String(evt.username || "");
+      const avatar = String(evt.avatar_url || "");
+      const list = (this.friends || []).map((f) => {
+        if (Number(f.friend_id) !== uid) return f;
+        return {
+          ...f,
+          nickname: nick,
+          username: username || f.username,
+          avatar_url: avatar || f.avatar_url,
+        };
+      });
+      this.friends = list;
+    },
+    onFriendAdded(evt) {
+      const uid = Number(evt.user_id || 0);
+      if (!uid) return;
+      const row = {
+        friend_id: uid,
+        username: String(evt.username || ""),
+        nickname: String(evt.nickname || ""),
+        avatar_url: String(evt.avatar_url || ""),
+      };
+      const list = [...(this.friends || [])];
+      const idx = list.findIndex((f) => Number(f.friend_id) === uid);
+      if (idx >= 0) list[idx] = { ...list[idx], ...row };
+      else list.unshift(row);
+      this.friends = list;
+      this.safeCall(() => this.syncFriendRequests(), "同步好友申请失败");
+    },
+    onFriendRemoved(evt) {
+      const uid = Number(evt.user_id || 0);
+      if (!uid) return;
+      this.friends = (this.friends || []).filter((f) => Number(f.friend_id) !== uid);
+      if (Number(this.currentPeerId || 0) === uid) {
+        this.currentPeerId = null;
+        this.messages = [];
+      }
+      this.conversations = (this.conversations || []).filter((c) => Number(c.peer_id) !== uid);
+      delete this.unreadMap[uid];
+    },
+    onGroupMetaEvent(evt) {
+      const gid = Number(evt.group_id || 0);
+      if (!gid) return;
+      if (evt.type === "group_disbanded") {
+        this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
+        delete this.groupMessagesMap[gid];
+        delete this.groupDetailsMap[gid];
+        delete this.groupMembersMap[gid];
+        delete this.groupUnreadMap[gid];
+        if (Number(this.selectedGroupId || 0) === gid) {
+          this.selectedGroupId = "";
+          this.showGroupPanel = false;
+        }
+        return;
+      }
+      if (evt.type === "group_member_removed" || evt.type === "group_member_left") {
+        const target = Number(evt.target_user_id || evt.user_id || 0);
+        if (target === Number(this.currentUser?.id || 0)) {
+          this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
+          delete this.groupMessagesMap[gid];
+          delete this.groupDetailsMap[gid];
+          delete this.groupMembersMap[gid];
+          delete this.groupUnreadMap[gid];
+          if (Number(this.selectedGroupId || 0) === gid) this.selectedGroupId = "";
+          if (Number(this.currentGroupID || 0) === gid) this.showGroupPanel = false;
+        } else if (Number(this.selectedGroupId || 0) === gid && this.showGroupPanel) {
+          this.safeCall(() => this.loadGroupMembers(gid), "刷新群成员失败");
+        }
+        return;
+      }
+      if (
+        evt.type === "group_created" ||
+        evt.type === "group_updated" ||
+        evt.type === "group_member_added" ||
+        evt.type === "group_owner_transferred"
+      ) {
+        const idx = (this.groupsLocal || []).findIndex((g) => Number(g.id) === gid);
+        const name = String(evt.name || `群聊 #${gid}`);
+        const now = Math.floor(Date.now() / 1000);
+        if (idx >= 0) {
+          const copy = [...this.groupsLocal];
+          copy[idx] = {
+            ...copy[idx],
+            name,
+            owner_user_id: Number(evt.owner_user_id || evt.new_owner_user_id || copy[idx].owner_user_id || 0),
+            notice: String(evt.notice != null ? evt.notice : copy[idx].notice || ""),
+            updated_at: now,
+          };
+          this.groupsLocal = copy;
+        } else {
+          this.groupsLocal = [
+            {
+              id: gid,
+              name,
+              owner_user_id: Number(evt.owner_user_id || evt.new_owner_user_id || 0),
+              notice: String(evt.notice || ""),
+              updated_at: now,
+            },
+            ...(this.groupsLocal || []),
+          ];
+        }
+        if (Number(this.selectedGroupId || 0) === gid && this.showGroupPanel) {
+          this.safeCall(() => this.loadGroupDetail(gid), "刷新群资料失败");
+          if (evt.type === "group_member_added" || evt.type === "group_owner_transferred") {
+            this.safeCall(() => this.loadGroupMembers(gid), "刷新群成员失败");
+          }
+        }
+      }
+    },
+    onGroupMessage(evt, from) {
+      const gid = Number(evt.group_id);
+      if (!gid) return;
+      if (!this.groupsLocal.find((g) => Number(g.id) === gid)) {
+        this.groupsLocal = [
+          {
+            id: gid,
+            name: String(evt.group_name || `群聊 #${gid}`),
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+          ...(this.groupsLocal || []),
+        ];
+      } else {
+        this.touchGroupLocal(gid);
+      }
+      const senderID = Number(evt.from_user_id || from || 0);
+      const payload = this.parseMessagePayload(String(evt.content || ""));
+      this.mergeIncomingGroupMessage(gid, {
+        from_user_id: senderID,
+        message_type: String(evt.message_type || "text"),
+        content: payload.text,
+        ui_type: payload.uiType,
+        file_id: payload.fileID,
+        file_name: payload.fileName,
+        seq: Number(evt.seq || 0),
+        isMe: senderID === Number(this.currentUser?.id || 0),
+        mention_meta: evt.mention_meta != null ? String(evt.mention_meta) : "",
+      });
+      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
+      if (Number(this.selectedGroupId || 0) !== gid) {
+        this.groupUnreadMap[gid] = Number(this.groupUnreadMap[gid] || 0) + 1;
+      } else {
+        this.safeCall(() => this.markCurrentGroupRead(), "更新群已读失败");
+      }
+    },
+    onPrivateMessage(from, content) {
+      const payload = this.parseMessagePayload(content);
+      const preview =
+        payload.uiType === "file" ? `[文件] ${payload.fileName || ""}` : String(payload.text || "");
+      const viewing = !this.selectedGroupId && Number(this.currentPeerId) === from;
+      if (viewing) {
+        this.messages.push({
+          from_user_id: from,
+          content: payload.text,
+          isMe: false,
+          ui_type: payload.uiType,
+          file_id: payload.fileID,
+          file_name: payload.fileName,
+        });
+        if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
+        this.touchPrivateConversation(from, preview);
+        this.safeCall(
+          () => apiRequest(`/api/v1/conversations/${encodeURIComponent(from)}/read`, { method: "PUT" }),
+          "标记已读失败"
+        );
+        return;
+      }
+      this.unreadMap[from] = Number(this.unreadMap[from] || 0) + 1;
+      this.touchPrivateConversation(from, preview);
+      if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "加载文件元信息失败");
+    },
+    touchPrivateConversation(peerID, previewText) {
+      const peer = Number(peerID || 0);
+      if (!peer) return;
+      const now = Math.floor(Date.now() / 1000);
+      const preview = String(previewText || "").slice(0, 48);
+      const list = [...(this.conversations || [])];
+      const idx = list.findIndex((c) => Number(c.peer_id) === peer);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], peer_id: peer, updated_at: now, last_preview: preview };
+      } else {
+        list.unshift({ peer_id: peer, updated_at: now, last_preview: preview });
+      }
+      this.conversations = list;
+    },
+    touchGroupLocal(gid) {
+      const id = Number(gid || 0);
+      if (!id) return;
+      const now = Math.floor(Date.now() / 1000);
+      const list = [...(this.groupsLocal || [])];
+      const idx = list.findIndex((g) => Number(g.id) === id);
+      if (idx < 0) return;
+      list[idx] = { ...list[idx], updated_at: now };
+      this.groupsLocal = list;
     },
     async loadFriends() {
       const res = await apiRequest("/api/v1/friends");
@@ -275,6 +415,18 @@ window.buildIMMethods = function buildIMMethods() {
         const gid = Number(g.id);
         if (gid && !this.groupMessagesMap[gid]) this.groupMessagesMap[gid] = [];
       }
+    },
+    async syncFriends() {
+      await this.loadFriends();
+    },
+    async syncFriendRequests() {
+      await this.loadFriendRequestsCenter();
+    },
+    async syncConversations() {
+      await this.loadConversations();
+    },
+    async syncGroups() {
+      await this.loadMyGroups();
     },
     async refreshAll() {
       await Promise.all([
@@ -341,7 +493,9 @@ window.buildIMMethods = function buildIMMethods() {
       });
       if (payload.uiType === "file" && payload.fileID) this.safeCall(() => this.ensureFileMeta(payload.fileID), "发送后刷新文件元信息失败");
       this.msgInput = "";
-      await this.loadConversations();
+      const preview =
+        payload.uiType === "file" ? `[文件] ${payload.fileName || ""}` : String(payload.text || "");
+      this.touchPrivateConversation(this.currentPeerId, preview);
     },
     async sendGroupMessage() {
       const gid = Number(this.selectedGroupId);
@@ -372,6 +526,7 @@ window.buildIMMethods = function buildIMMethods() {
         body: { content, client_msg_id: clientMsgID },
       });
       this.groupMsg = "";
+      this.touchGroupLocal(gid);
     },
     async loadGroupMessages(groupID, opts = {}) {
       const gid = Number(groupID);
@@ -455,7 +610,16 @@ window.buildIMMethods = function buildIMMethods() {
         body: { name, notice },
       });
       this.groupDetailsMap[this.currentGroupID] = res.group || this.currentGroupDetail;
-      await this.refreshAll();
+      const g = res.group;
+      if (g) {
+        const gid = Number(g.id || this.currentGroupID);
+        const idx = (this.groupsLocal || []).findIndex((x) => Number(x.id) === gid);
+        if (idx >= 0) {
+          const copy = [...this.groupsLocal];
+          copy[idx] = { ...copy[idx], ...g };
+          this.groupsLocal = copy;
+        }
+      }
     },
     async addGroupMemberByID() {
       const gid = this.currentGroupID;
@@ -467,7 +631,6 @@ window.buildIMMethods = function buildIMMethods() {
       });
       this.groupMemberAddInput = "";
       await this.loadGroupMembers(gid);
-      await this.refreshAll();
     },
     async removeGroupMember(userID) {
       const gid = this.currentGroupID;
@@ -477,7 +640,6 @@ window.buildIMMethods = function buildIMMethods() {
         method: "DELETE",
       });
       await this.loadGroupMembers(gid);
-      await this.refreshAll();
     },
     async transferGroupOwnerByID() {
       const gid = this.currentGroupID;
@@ -488,7 +650,7 @@ window.buildIMMethods = function buildIMMethods() {
         body: { target_user_id: uid },
       });
       this.groupTransferInput = "";
-      await Promise.all([this.loadGroupDetail(gid), this.loadGroupMembers(gid), this.refreshAll()]);
+      await Promise.all([this.loadGroupDetail(gid), this.loadGroupMembers(gid)]);
     },
     async leaveCurrentGroup() {
       const gid = this.currentGroupID;
@@ -497,7 +659,10 @@ window.buildIMMethods = function buildIMMethods() {
       this.closeGroupPanel();
       this.selectedGroupId = "";
       delete this.groupMessagesMap[gid];
-      await this.refreshAll();
+      delete this.groupDetailsMap[gid];
+      delete this.groupMembersMap[gid];
+      delete this.groupUnreadMap[gid];
+      this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
     },
     async disbandCurrentGroup() {
       const gid = this.currentGroupID;
@@ -506,7 +671,10 @@ window.buildIMMethods = function buildIMMethods() {
       this.closeGroupPanel();
       this.selectedGroupId = "";
       delete this.groupMessagesMap[gid];
-      await this.refreshAll();
+      delete this.groupDetailsMap[gid];
+      delete this.groupMembersMap[gid];
+      delete this.groupUnreadMap[gid];
+      this.groupsLocal = (this.groupsLocal || []).filter((g) => Number(g.id) !== gid);
     },
     async markCurrentGroupRead() {
       const gid = Number(this.selectedGroupId);
@@ -549,12 +717,26 @@ window.buildIMMethods = function buildIMMethods() {
     },
     openCreateGroupModal() {
       this.createGroupName = "";
+      this.createGroupPickFilter = "";
       this.selectedFriendIDs = [];
       this.showCreateGroupModal = true;
+      if (!(this.friends || []).length) {
+        this.safeCall(() => this.loadFriends(), "加载好友失败");
+      }
     },
     async confirmCreateGroupBySelection() {
-      const name = this.createGroupName.trim() || `新群聊 ${Date.now().toString().slice(-4)}`;
       const members = this.selectedFriendIDs.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0);
+      if (!members.length) throw new Error("请至少选择一位好友");
+      let name = this.createGroupName.trim();
+      if (!name) {
+        const labels = members
+          .map((id) => {
+            const f = (this.friends || []).find((x) => Number(x.friend_id) === id);
+            return f ? this.friendDisplayName(f) : `用户${id}`;
+          })
+          .slice(0, 3);
+        name = labels.length ? `${labels.join("、")}的群` : `新群聊 ${Date.now().toString().slice(-4)}`;
+      }
       const res = await apiRequest("/api/v1/groups", {
         method: "POST",
         body: { name, member_user_ids: members },
@@ -562,12 +744,26 @@ window.buildIMMethods = function buildIMMethods() {
       const group = res.group;
       this.groupsLocal = [group, ...this.groupsLocal.filter((g) => Number(g.id) !== Number(group.id))];
       this.showCreateGroupModal = false;
+      this.leftTab = "sessions";
       await this.selectSession({ type: "group", id: group.id });
-      await this.loadConversations();
     },
     openAddFriendModal() {
       this.friendRequestIDInput = "";
       this.showAddFriendModal = true;
+    },
+    async confirmUpdateNickname() {
+      const nickname = String(this.editNicknameInput || "").trim();
+      const res = await apiRequest("/api/v1/me", {
+        method: "PUT",
+        body: { nickname },
+      });
+      const latest = res?.user || null;
+      if (latest && Number(latest.id || 0) > 0) {
+        this.currentUser = latest;
+        saveAuth(this.token, latest);
+      }
+      this.showMyProfileModal = false;
+      this.log("显示名已更新");
     },
     async confirmSendFriendRequestByID() {
       const toID = Number(this.friendRequestIDInput);
@@ -577,8 +773,26 @@ window.buildIMMethods = function buildIMMethods() {
         body: { to_user_id: toID, remark: "" },
       });
       this.showAddFriendModal = false;
+      this.leftTab = "contacts";
+      this.contactsTab = "outgoing";
       await this.loadFriendRequestsCenter();
-      this.log(`已发送好友申请 #${toID}`);
+      this.log("好友申请已发出，等待对方处理");
+    },
+    openContactsNav() {
+      this.leftTab = "contacts";
+      this.safeCall(() => this.syncFriendRequests(), "同步好友申请失败");
+    },
+    openContactsTab(tab) {
+      this.contactsTab = tab;
+      this.safeCall(() => this.syncFriendRequests(), "同步好友申请失败");
+    },
+    friendRequestStatusLabel(status) {
+      const s = String(status || "").toLowerCase();
+      if (s === "pending") return "等待对方处理";
+      if (s === "accepted") return "已同意";
+      if (s === "rejected") return "已拒绝";
+      if (s === "cancelled" || s === "canceled") return "已取消";
+      return s ? `状态：${s}` : "状态未知";
     },
     async approveRequest(id) {
       await apiRequest(`/api/v1/friends/requests/${encodeURIComponent(id)}/approve`, { method: "POST" });
@@ -627,15 +841,9 @@ window.buildIMMethods = function buildIMMethods() {
       }
       this.connectWs();
       await this.refreshAll();
-      this.startAutoSync();
     },
-    startAutoSync() {
-      this.stopAutoSync();
-      this.autoSyncTimer = setInterval(() => {
-        if (document.hidden) return;
-        this.safeCall(() => this.refreshAll(), "自动刷新失败");
-      }, 3000);
-    },
+    // 已取消 3s 全量轮询；保留空实现以免旧调用报错。
+    startAutoSync() {},
     stopAutoSync() {
       if (this.autoSyncTimer) {
         clearInterval(this.autoSyncTimer);
@@ -645,13 +853,6 @@ window.buildIMMethods = function buildIMMethods() {
         clearTimeout(this.pendingSyncTimer);
         this.pendingSyncTimer = null;
       }
-    },
-    queueLightSync() {
-      if (this.pendingSyncTimer) return;
-      this.pendingSyncTimer = setTimeout(async () => {
-        this.pendingSyncTimer = null;
-        await this.safeCall(() => this.refreshAll(), "轻量刷新失败");
-      }, 400);
     },
     /** 群聊 @ 分段：仅依据服务端 `mention_meta`（V1）+ content 的 rune 区间；文件/系统消息/非群聊返回 [] */
     groupMentionSegments(m) {

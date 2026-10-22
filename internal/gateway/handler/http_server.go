@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pbauth "pim/internal/auth/pb"
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	conversationhandler "pim/internal/conversation/handler"
 	pbconversation "pim/internal/conversation/pb"
 	pbfile "pim/internal/file/pb"
@@ -25,7 +25,8 @@ import (
 	gatewaymodel "pim/internal/gateway/model"
 	gatewayservice "pim/internal/gateway/service"
 	pbgroup "pim/internal/group/pb"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
+	"pim/internal/platform/registry"
 	pbuser "pim/internal/user/pb"
 )
 
@@ -46,6 +47,7 @@ type HTTPServer struct {
 	fileServiceBaseURL string
 	apiRouteCatalog    []string
 	loginInflightSem   chan struct{}
+	pushWatcher        *registry.GatewayPushWatcher
 }
 
 // NewHTTPServer 创建 Gateway HTTPServer。
@@ -96,6 +98,7 @@ func NewHTTPServer(
 			srv.prewarmGroupMembersLocalIndex(ctx, config.GatewayGroupMemberPrewarmLimit)
 		}()
 	}
+	srv.ensurePushWatcher()
 	return srv
 }
 
@@ -106,6 +109,10 @@ func (s *HTTPServer) Close() error {
 	}
 	if s.groupKafkaDispatch != nil {
 		s.groupKafkaDispatch.stop()
+	}
+	if s.pushWatcher != nil {
+		s.pushWatcher.Close()
+		s.pushWatcher = nil
 	}
 	if s.kafkaProducer == nil {
 		return nil
@@ -266,6 +273,35 @@ func (s *HTTPServer) handleMe(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": gatewayservice.UserFromPB(resp.User)})
+}
+
+// handleUpdateMe 更新当前用户资料（目前仅 nickname），并扇出 profile_updated。
+func (s *HTTPServer) handleUpdateMe(c *gin.Context) {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	var req gatewaymodel.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	resp, err := s.userClient.UpdateProfile(ctxWithTrace(c), &pbuser.UpdateProfileRequest{
+		UserId:   uint64(userID),
+		Nickname: req.Nickname,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.InvalidArgument {
+			c.JSON(http.StatusBadRequest, gin.H{"error": st.Message()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	u := resp.GetUser()
+	traceID := c.GetString("trace_id")
+	go s.fanoutProfileUpdated(traceID, userID, u)
+	c.JSON(http.StatusOK, gin.H{"message": resp.GetMessage(), "user": gatewayservice.UserFromPB(u)})
 }
 
 // handleListConversations 查询会话列表。

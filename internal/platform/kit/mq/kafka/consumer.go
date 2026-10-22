@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"pim/internal/config"
-	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/platform/config"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 )
 
 func applyHighThroughputConsumerConfig(cfg *sarama.Config) {

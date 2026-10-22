@@ -14,6 +14,7 @@ import (
 func (s *HTTPServer) RegisterRoutes(r *gin.Engine) {
 	authGroup := r.Group("/api/v1", authhandler.GRPCMiddleware(s.authClient))
 
+	// /ws：Gateway 唯一长连接入口；实现细节见 handleWS + conversation/handler.WebSocketHandler。
 	r.GET("/ws", authhandler.GRPCMiddleware(s.authClient), s.handleWS)
 	r.POST("/api/v1/login", s.handleLogin)
 	r.POST("/api/v1/register", s.handleRegister)
@@ -50,6 +51,7 @@ func (s *HTTPServer) captureAPIRouteCatalog(r *gin.Engine) {
 
 func (s *HTTPServer) registerUserAndFriendRoutes(authGroup *gin.RouterGroup) {
 	authGroup.GET("/me", s.handleMe)
+	authGroup.PUT("/me", s.handleUpdateMe)
 	authGroup.GET("/friends", s.handleListFriends)
 	authGroup.POST("/friends/requests", s.handleSendFriendRequest)
 	authGroup.POST("/friends/requests/:id/approve", s.handleApproveFriendRequest)

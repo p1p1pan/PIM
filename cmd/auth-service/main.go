@@ -12,10 +12,10 @@ import (
 
 	authhandler "pim/internal/auth/handler"
 	pbauth "pim/internal/auth/pb"
-	"pim/internal/config"
-	grpcresolver "pim/internal/grpcresolver"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	grpcresolver "pim/internal/platform/grpcresolver"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 	pbuser "pim/internal/user/pb"
 )
 

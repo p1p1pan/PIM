@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // routeCacheEntry 保存接收者到 gateway 路由的短期缓存条目。

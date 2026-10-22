@@ -21,8 +21,8 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
-	"pim/internal/observability/promql"
+	"pim/internal/platform/config"
+	"pim/internal/platform/observability/promql"
 )
 
 // Service 承载与 gateway.HTTPServer 中已迁出的只读 admin 能力，不含 drill / 文件死信重放写操作。

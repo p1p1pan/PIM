@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	filehandler "pim/internal/file/handler"
 	filemodel "pim/internal/file/model"
 	filemq "pim/internal/file/mq"
@@ -19,11 +19,11 @@ import (
 	filestorage "pim/internal/file/storage"
 	pbfriend "pim/internal/friend/pb"
 	pbgroup "pim/internal/group/pb"
-	grpcresolver "pim/internal/grpcresolver"
-	pimdb "pim/internal/kit/db"
-	"pim/internal/kit/mq/kafka"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	grpcresolver "pim/internal/platform/grpcresolver"
+	pimdb "pim/internal/platform/kit/db"
+	"pim/internal/platform/kit/mq/kafka"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 )
 
 func main() {

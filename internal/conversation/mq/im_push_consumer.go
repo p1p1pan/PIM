@@ -14,9 +14,9 @@ import (
 	"pim/internal/conversation/model"
 	pbgateway "pim/internal/gateway/pb"
 	logmodel "pim/internal/log/model"
-	"pim/internal/kit/mq/kafka"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	"pim/internal/platform/kit/mq/kafka"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 )
 
 // imPushItem 把解码后的消息与 sender 侧入口时间绑在一起，

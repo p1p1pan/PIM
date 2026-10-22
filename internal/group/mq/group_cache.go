@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	groupservice "pim/internal/group/service"
 )
 

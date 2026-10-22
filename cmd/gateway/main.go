@@ -20,10 +20,10 @@ import (
 	pbgroup "pim/internal/group/pb"
 	pbuser "pim/internal/user/pb"
 
-	"pim/internal/config"
-	grpcresolver "pim/internal/grpcresolver"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	grpcresolver "pim/internal/platform/grpcresolver"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 )
 
 func main() {

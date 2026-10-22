@@ -8,7 +8,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // RegisterEndpoint 使用租约注册实例；返回 revoke 关闭函数。

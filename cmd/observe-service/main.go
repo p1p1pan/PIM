@@ -8,10 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
-	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/platform/config"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 	"pim/internal/observe"
-	"pim/internal/registry"
+	"pim/internal/platform/registry"
 )
 
 func main() {

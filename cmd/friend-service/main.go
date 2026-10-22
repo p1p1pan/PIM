@@ -11,17 +11,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	friendhandler "pim/internal/friend/handler"
 	friendmodel "pim/internal/friend/model"
 	pbfriend "pim/internal/friend/pb"
 	friendrepo "pim/internal/friend/repo"
 	friendservice "pim/internal/friend/service"
-	grpcresolver "pim/internal/grpcresolver"
-	pimdb "pim/internal/kit/db"
-	observemetrics "pim/internal/kit/observability/metrics"
+	grpcresolver "pim/internal/platform/grpcresolver"
+	pimdb "pim/internal/platform/kit/db"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 	pbuser "pim/internal/user/pb"
-	"pim/internal/registry"
+	"pim/internal/platform/registry"
 )
 
 func main() {

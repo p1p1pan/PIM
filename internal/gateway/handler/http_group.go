@@ -19,12 +19,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"pim/internal/config"
-	conversationhandler "pim/internal/conversation/handler"
+	"pim/internal/platform/config"
 	gatewaymodel "pim/internal/gateway/model"
 	groupmodel "pim/internal/group/model"
 	pbgroup "pim/internal/group/pb"
-	observemetrics "pim/internal/kit/observability/metrics"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 	pbuser "pim/internal/user/pb"
 )
 
@@ -518,7 +517,7 @@ func (s *HTTPServer) pushGroupEvent(c *gin.Context, toUserID uint, eventType str
 		payload[k] = v
 	}
 	data, _ := json.Marshal(payload)
-	if err := conversationhandler.PushToUser(toUserID, 0, string(data)); err != nil {
+	if err := s.pushContentRouted(ctxWithTrace(c), toUserID, 0, string(data)); err != nil {
 		log.Printf("[trace=%s] push group event failed: event=%s to=%d gid=%d err=%v", c.GetString("trace_id"), eventType, toUserID, groupID, err)
 	}
 }
@@ -1053,16 +1052,29 @@ func (s *HTTPServer) handleListGroupMembers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	list := make([]gin.H, 0, len(resp.GetMembers()))
-	for _, m := range resp.GetMembers() {
-		list = append(list, gin.H{
+	ctx := ctxWithTrace(c)
+	list := make([]gin.H, len(resp.GetMembers()))
+	var wg sync.WaitGroup
+	for i, m := range resp.GetMembers() {
+		item := gin.H{
 			"id":        m.GetId(),
 			"group_id":  m.GetGroupId(),
 			"user_id":   m.GetUserId(),
 			"role":      m.GetRole(),
 			"joined_at": m.GetJoinedAt(),
-		})
+		}
+		list[i] = item
+		uid := m.GetUserId()
+		if uid == 0 || s.userClient == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, userID uint64) {
+			defer wg.Done()
+			s.attachUserProfile(ctx, list[idx], userID)
+		}(i, uid)
 	}
+	wg.Wait()
 	c.JSON(http.StatusOK, gin.H{"members": list})
 }
 

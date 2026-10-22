@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // parsePromFloat64 解析 /api/v1/query 的 value 项：部分 Prom/JSON 组合为字符串，部分为 number。

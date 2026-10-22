@@ -22,12 +22,24 @@ func EnsureGroupMessageMentionMetaColumn(db *gorm.DB) error {
 		)
 		return db.Exec(sql).Error
 	}
-	if err := db.Exec(
-		`UPDATE group_messages SET mention_meta = ? WHERE mention_meta IS NULL OR TRIM(mention_meta) = ''`,
-		empty,
-	).Error; err != nil {
+
+	// 先 COUNT：无脏数据则跳过全表 UPDATE（TRIM 全表扫描是启动慢 SQL 的主因）。
+	var bad int64
+	if err := db.Raw(`
+		SELECT COUNT(*) FROM group_messages
+		WHERE mention_meta IS NULL OR mention_meta = ''
+	`).Scan(&bad).Error; err != nil {
 		return err
 	}
+	if bad > 0 {
+		if err := db.Exec(
+			`UPDATE group_messages SET mention_meta = ? WHERE mention_meta IS NULL OR mention_meta = ''`,
+			empty,
+		).Error; err != nil {
+			return err
+		}
+	}
+
 	if err := db.Exec(fmt.Sprintf(
 		`ALTER TABLE group_messages ALTER COLUMN mention_meta SET DEFAULT %s`,
 		q,

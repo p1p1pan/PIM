@@ -6,10 +6,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	loghandler "pim/internal/log/handler"
 	logmq "pim/internal/log/mq"
-	observemetrics "pim/internal/kit/observability/metrics"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 	logstore "pim/internal/log/store"
 )
 

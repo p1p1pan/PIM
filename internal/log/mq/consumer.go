@@ -9,7 +9,7 @@ import (
 
 	logmodel "pim/internal/log/model"
 	logstore "pim/internal/log/store"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 
 	"github.com/Shopify/sarama"
 )

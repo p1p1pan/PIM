@@ -58,14 +58,12 @@ PIM 的目标不是做一个“单页聊天室 Demo”，而是把 IM 系统里�
 ```text
 .
 ├─ cmd/                 # 各服务启动入口（含 cmd/all 一键启动）
-├─ internal/            # 业务实现
-├─ pkg/                 # 公共包
+├─ internal/            # 业务实现与共享基建（kit / config / registry 等）
 ├─ proto/               # gRPC 协议定义
 ├─ web/                 # 前端静态页面与脚本
-├─ deployments/         # Docker Compose / K8s / observability 配置
-├─ test/                # 测试
-└─ doc/                 # 补充文档
+└─ deployments/         # Docker Compose / K8s / observability 配置
 ```
+
 
 ## 环境要求
 
@@ -90,9 +88,8 @@ go run .\cmd\all
 
 访问前端：
 
-- **推荐（与 LB 同源）**：先 `docker compose ... up -d` 启动 **gateway-lb**，浏览器打开 **`http://localhost:28080/`**（由 Nginx 托管 `web/index.html`，`/api`、`/ws` 仍负载到 gateway）。
-- 或直接双击本地 **`web/index.html`**（`file://` 时 API 默认指向 **`http://localhost:28080`**）。
-- 浏览器 API/WebSocket：与 **`go run ./cmd/all`**、infra compose 一并启动后，经 Nginx **`http://localhost:28080`**（`gateway-lb` → 26080/26180）。
+- 浏览器打开 **http://localhost:28080/**（`gateway-lb` 托管 `web/`，并反代 `/api`、`/ws` 到 gateway）
+- 也可本地打开 `web/index.html`（`file://` 时 API 默认指向 `http://localhost:28080`）
 
 ### 方式 B：Minikube 全量部署
 

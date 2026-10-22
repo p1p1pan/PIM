@@ -92,6 +92,26 @@ func (s *GRPCUserServer) Login(ctx context.Context, req *pbuser.LoginRequest) (*
 	return &pbuser.LoginResponse{Message: "Login successful", Token: token, User: userToPB(u)}, nil
 }
 
+// UpdateProfile 更新用户资料（目前仅 nickname）。
+func (s *GRPCUserServer) UpdateProfile(ctx context.Context, req *pbuser.UpdateProfileRequest) (*pbuser.UpdateProfileResponse, error) {
+	traceID := traceIDFromCtx(ctx)
+	if req == nil || req.GetUserId() == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "user id is required")
+	}
+	u, err := s.svc.UpdateNickname(uint(req.GetUserId()), req.GetNickname())
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		if err.Error() == "nickname too long" {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+		log.Printf("[trace=%s] user.UpdateProfile: %v", traceID, err)
+		return nil, status.Errorf(codes.Internal, "failed to update profile: %v", err)
+	}
+	return &pbuser.UpdateProfileResponse{Message: "ok", User: userToPB(u)}, nil
+}
+
 // userToPB 将领域模型转换为 protobuf 对象。
 func userToPB(u *model.User) *pbuser.User {
 	if u == nil {

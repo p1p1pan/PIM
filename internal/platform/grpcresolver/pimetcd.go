@@ -10,8 +10,8 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc/resolver"
 
-	"pim/internal/config"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	"pim/internal/platform/registry"
 )
 
 const Scheme = "pim-etcd"

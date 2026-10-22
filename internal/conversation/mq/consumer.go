@@ -8,9 +8,9 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
-	"pim/internal/kit/mq/kafka"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	"pim/internal/platform/kit/mq/kafka"
+	"pim/internal/platform/registry"
 
 	conversationservice "pim/internal/conversation/service"
 )

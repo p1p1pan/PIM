@@ -1,8 +1,7 @@
-// Command pim-prom-etcd-sd：读 etcd 中 observe 服务注册的 HTTP 地址，生成 Prometheus file_sd 的 JSON。
+// Optional observability helper (not a business service).
+// Reads observe endpoints from etcd and writes Prometheus file_sd JSON.
 //
-// 	go run ./cmd/pim-prom-etcd-sd/ -out deployments/observability/file_sd/observe.json
-//
-// Docker 内 Prom 需抓宿主机进程时，用 -scrape-host=host.docker.internal 将 127.0.0.1 替换成可解析的主机名。
+//	go run ./deployments/observability/tools/pim-prom-etcd-sd/ -out deployments/observability/file_sd/observe.json
 package main
 
 import (
@@ -17,8 +16,8 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"pim/internal/config"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	"pim/internal/platform/registry"
 )
 
 type fileSDEntry struct {
@@ -28,7 +27,7 @@ type fileSDEntry struct {
 
 func main() {
 	outPath := flag.String("out", "deployments/observability/file_sd/observe.json", "output file path")
-	scrapeHost := flag.String("scrape-host", "host.docker.internal", "replace 127.0.0.1 in registered http addr for Prometheus in Docker")
+	scrapeHost := flag.String("scrape-host", "host.docker.internal", "replace 127.0.0.1 for Prometheus in Docker")
 	interval := flag.Duration("interval", 0, "if >0, loop every interval; else one-shot")
 	flag.Parse()
 

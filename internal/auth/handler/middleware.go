@@ -11,7 +11,7 @@ import (
 
 	pbauth "pim/internal/auth/pb"
 	authservice "pim/internal/auth/service"
-	observemetrics "pim/internal/kit/observability/metrics"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 )
 
 // AuthMiddleware 本地 JWT 鉴权中间件。

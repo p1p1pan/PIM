@@ -9,7 +9,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // OpenPostgres 使用与 config 一致的 DSN 片段打开 GORM，并对底层 *sql.DB 设置连接池参数。

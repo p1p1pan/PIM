@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	"pim/internal/conversation/model"
 	logmodel "pim/internal/log/model"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 
 	conversationservice "pim/internal/conversation/service"
 )

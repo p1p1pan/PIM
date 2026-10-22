@@ -10,17 +10,17 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	conversationhandler "pim/internal/conversation/handler"
 	conversationmodel "pim/internal/conversation/model"
 	conversationmq "pim/internal/conversation/mq"
 	pbconversation "pim/internal/conversation/pb"
 	conversationrepo "pim/internal/conversation/repo"
 	conversationservice "pim/internal/conversation/service"
-	pimdb "pim/internal/kit/db"
-	"pim/internal/kit/mq/kafka"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	pimdb "pim/internal/platform/kit/db"
+	"pim/internal/platform/kit/mq/kafka"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 )
 
 func main() {

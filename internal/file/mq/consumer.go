@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	filemodel "pim/internal/file/model"
 	fileservice "pim/internal/file/service"
 	logkit "pim/internal/log/kit"
 	logmodel "pim/internal/log/model"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 
 	"github.com/Shopify/sarama"
 )

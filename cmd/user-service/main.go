@@ -12,10 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"pim/internal/config"
-	pimdb "pim/internal/kit/db"
-	observemetrics "pim/internal/kit/observability/metrics"
-	"pim/internal/registry"
+	"pim/internal/platform/config"
+	pimdb "pim/internal/platform/kit/db"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
+	"pim/internal/platform/registry"
 	userhandler "pim/internal/user/handler"
 	usermodel "pim/internal/user/model"
 	userrepo "pim/internal/user/repo"

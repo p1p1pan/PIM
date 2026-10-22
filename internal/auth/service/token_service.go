@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"pim/internal/auth/model"
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // GenerateToken 使用配置中的 JWTSecret 签发 token。

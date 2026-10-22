@@ -13,8 +13,8 @@ import (
 
 	"pim/internal/conversation/model"
 	pbconversation "pim/internal/conversation/pb"
-	"pim/internal/kit/mq/kafka"
-	observemetrics "pim/internal/kit/observability/metrics"
+	"pim/internal/platform/kit/mq/kafka"
+	observemetrics "pim/internal/platform/kit/observability/metrics"
 )
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}

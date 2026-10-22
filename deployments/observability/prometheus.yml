@@ -83,7 +83,8 @@ scrape_configs:
         labels:
           service: log-service
 
-  # observe-service：宿主机端口由 deployments/observability/file_sd/observe.json 提供，可用 cmd/pim-prom-etcd-sd 从 etcd 刷新。
+  # observe-service：targets 来自 file_sd/observe.json（默认固定端口即可）。
+  # 若改了 observe 监听地址，可运行：go run ./deployments/observability/tools/pim-prom-etcd-sd/
   - job_name: pim-observe
     metrics_path: /metrics
     file_sd_configs:

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	logkit "pim/internal/log/kit"
 	logmodel "pim/internal/log/model"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 )
 
 func emitConsumerLog(producer *kafka.Producer, entry logmodel.Log) {

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 // PromSample 是 instant-vector 查询（/api/v1/query）里一条结果：一组标签 + 一个数值。

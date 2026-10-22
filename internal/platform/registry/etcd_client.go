@@ -8,7 +8,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 )
 
 var (

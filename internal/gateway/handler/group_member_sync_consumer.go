@@ -9,7 +9,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	groupmodel "pim/internal/group/model"
-	"pim/internal/kit/mq/kafka"
+	"pim/internal/platform/kit/mq/kafka"
 )
 
 // StartGroupMemberSyncConsumer 启动 gateway 本地成员索引同步消费者。

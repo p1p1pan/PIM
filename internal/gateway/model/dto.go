@@ -12,6 +12,11 @@ type RegisterRequest struct {
 	Password string `json:"password"`
 }
 
+// UpdateProfileRequest 是更新当前用户资料请求体（目前仅 nickname）。
+type UpdateProfileRequest struct {
+	Nickname string `json:"nickname"`
+}
+
 // AddFriendRequest 是 Gateway 添加好友接口请求体。
 type AddFriendRequest struct {
 	FriendID uint `json:"friend_id"`

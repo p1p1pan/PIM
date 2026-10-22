@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"pim/internal/config"
+	"pim/internal/platform/config"
 	logkit "pim/internal/log/kit"
 	logmodel "pim/internal/log/model"
 )
